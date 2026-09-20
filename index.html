@@ -248,7 +248,7 @@ g<sub>B</sub>(θ) = (1/B) · Σ<sub>i∈B</sub> ∇L<sub>i</sub>(θ)　　　　
 
 <div class="demo">
   <div class="demo-title">실험 1 · 미니배치 기울기는 진짜 기울기의 불편 추정량</div>
-  <div class="demo-sub">손실 지형 위 한 점에서의 기울기 화살표. 배경 등고선은 L(w, b), ★는 최적점. 평면을 클릭하면 측정 지점이 바뀝니다.</div>
+  <div class="demo-sub">손실 지형 위 한 점에서의 기울기 화살표. 배경 등고선은 L(w, b), ★는 최적점. 평면을 클릭하면 측정 지점이 바뀝니다. 화살표 길이는 <strong>전부 같은 배율</strong>로 키워 그립니다(서로의 길이 비와 방향은 그대로).</div>
   <div class="controls">
     <label>배치 크기 B <input type="range" id="d1B" min="1" max="40" value="4"><span class="readout" id="d1Bv">4</span></label>
     <button id="d1One">미니배치 1개 뽑기</button>
@@ -365,7 +365,7 @@ GPU가 32개든 256개든 거의 같은 시간에 처리하기 때문이지, 통
 
 <div class="demo">
   <div class="demo-title">실험 3 · 배치 크기 vs 기울기 오차 — 이론과 실측</div>
-  <div class="demo-sub">측정 지점 θ = (0.2, 3.3)에서 각 B마다 미니배치를 2,000번 뽑아 ‖g<sub>B</sub> − ∇L‖의 제곱평균제곱근(RMS)을 실측하고, 위 공식과 겹쳐 그립니다.</div>
+  <div class="demo-sub">측정 지점 θ = (0.4, 1.0)(실험 1의 그 지점)에서 각 B마다 미니배치를 2,000번 뽑아 ‖g<sub>B</sub> − ∇L‖의 제곱평균제곱근(RMS)을 실측하고, 위 공식과 겹쳐 그립니다.</div>
   <div class="controls">
     <button id="d3Run">측정 실행</button>
     <label><input type="checkbox" id="d3Log" checked> 로그 축</label>
@@ -834,8 +834,8 @@ var D1 = (function () {
   var cv = document.getElementById('d1c');
   var ctx = setupHiDPI(cv);
   var rnd = mulberry32(7);
-  var st = { w: 0.2, b: 3.3, B: 4, list: [], sum: [0, 0], errSum: 0 };
-  var SCALE = 0.075;
+  var st = { w: 0.4, b: 1.0, B: 4, list: [], sum: [0, 0], errSum: 0 };
+  var RMS_PX = 130;   // 샘플 기울기의 화면상 RMS 길이를 이 값에 맞춘다
 
   function pick() {
     var idx = [], pool = shuffled(rnd);
@@ -852,19 +852,29 @@ var D1 = (function () {
     ctx = paintBG(cv);
     var G = fullGrad(st.w, st.b);
     var x0 = px(cv, st.w), y0 = py(cv, st.b);
-    var sx = (px(cv, 1) - px(cv, 0)) * SCALE, sy = (py(cv, 1) - py(cv, 0)) * SCALE;
+    var ux = px(cv, 1) - px(cv, 0), uy = py(cv, 1) - py(cv, 0);
+    // 화살표 배율: 샘플 기울기 40개의 화면상 RMS 길이가 항상 RMS_PX가 되도록 정규화.
+    // (모든 화살표에 같은 배율을 쓰므로 서로의 길이 비율과 방향은 그대로 보존된다)
+    var acc = 0;
+    for (var q = 0; q < N; q++) {
+      var gq = sampleGrad(q, st.w, st.b);
+      acc += gq[0] * ux * gq[0] * ux + gq[1] * uy * gq[1] * uy;
+    }
+    var rmsPx = Math.sqrt(acc / N);
+    var k = rmsPx > 1e-9 ? RMS_PX / rmsPx : 1;
+    var sx = ux * k, sy = uy * k;
     // 개별 미니배치 기울기 (최근 60개)
     var start = Math.max(0, st.list.length - 60);
     for (var i = start; i < st.list.length; i++) {
       var g = st.list[i];
-      arrow(ctx, x0, y0, x0 - g[0] * sx, y0 - g[1] * sy, css('--muted'), 1.2, 0.35);
+      arrow(ctx, x0, y0, x0 - g[0] * sx, y0 - g[1] * sy, css('--muted'), 1.3, 0.45);
     }
     // 진짜 기울기 (내리막 방향으로 −∇L 표시)
-    arrow(ctx, x0, y0, x0 - G[0] * sx, y0 - G[1] * sy, css('--s1'), 3.2, 1);
+    arrow(ctx, x0, y0, x0 - G[0] * sx, y0 - G[1] * sy, css('--s1'), 3.4, 1);
     // 평균
     if (st.list.length) {
       var a = [st.sum[0] / st.list.length, st.sum[1] / st.list.length];
-      arrow(ctx, x0, y0, x0 - a[0] * sx, y0 - a[1] * sy, css('--accent'), 2.4, 1);
+      arrow(ctx, x0, y0, x0 - a[0] * sx, y0 - a[1] * sy, css('--accent'), 2.6, 1);
       document.getElementById('d1avg').textContent = '(' + fmt(a[0]) + ', ' + fmt(a[1]) + ')';
       document.getElementById('d1err').textContent = fmt(Math.hypot(a[0] - G[0], a[1] - G[1]), 3);
       document.getElementById('d1ind').textContent = fmt(st.errSum / st.list.length, 3);
@@ -875,8 +885,9 @@ var D1 = (function () {
     }
     ctx.fillStyle = css('--ink'); ctx.beginPath(); ctx.arc(x0, y0, 4.5, 0, 7); ctx.fill();
     ctx.font = '11px ui-monospace, monospace'; ctx.fillStyle = css('--ink2'); ctx.textAlign = 'left';
-    ctx.fillText('θ = (' + fmt(st.w) + ', ' + fmt(st.b) + ')', x0 + 9, y0 - 8);
-    ctx.fillText('화살표는 내리막 방향 −g', 10, 18);
+    ctx.fillText('θ = (' + fmt(st.w) + ', ' + fmt(st.b) + ')', x0 + 9, y0 - 9);
+    ctx.textAlign = 'right'; ctx.fillStyle = css('--muted');
+    ctx.fillText('화살표 = 내리막 방향 −g · 길이는 모두 같은 배율로 정규화', cv._logicalW - 10, 18);
     document.getElementById('d1n').textContent = comma(st.list.length);
     document.getElementById('d1g').textContent = '(' + fmt(G[0]) + ', ' + fmt(G[1]) + ')';
   }
@@ -1026,7 +1037,7 @@ function polyline(ax, pts, color, width, dash) {
 var D3 = (function () {
   var cv = document.getElementById('d3c');
   setupHiDPI(cv);
-  var P = [0.2, 3.3];
+  var P = [0.4, 1.0];   // 실험 1과 같은 측정 지점
   var BS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32, 36, 40];
   var data = null, S2 = 0;
   function measure() {
