@@ -185,8 +185,9 @@ footer { margin-top: 70px; padding-top: 18px; border-top: 1px solid var(--line);
 <li><a href="#s6">노이즈는 버그가 아니다 — 지역 최솟값 탈출</a></li>
 <li><a href="#s7">그래서 학습률을 줄인다 — 노이즈 볼과 Robbins–Monro 조건</a></li>
 <li><a href="#s8">실전 메모 — 셔플·에폭·선형 스케일링, 그리고 이름의 혼선</a></li>
-<li><a href="#s9">정리 — 한 문장으로</a></li>
-<li><a href="#s10">이해도 퀴즈</a></li>
+<li><a href="#s9">여러 대로 나눠 돌리기 — 동기 SGD와 비동기 SGD</a></li>
+<li><a href="#s10">정리 — 한 문장으로</a></li>
+<li><a href="#s11">이해도 퀴즈</a></li>
 </ol>
 <div class="toc-extra"><a href="#note-rm">부록 · 1951년, 신경망도 없던 시절에 이미 증명된 것 — Robbins–Monro</a></div>
 </div>
@@ -559,6 +560,7 @@ B를 k배 키우면 스텝 수가 1/k로 줄어듭니다. 같은 거리를 가�
 이것이 <a href="https://arxiv.org/abs/1706.02677" target="_blank" rel="noopener">Goyal et al. (2017)</a>이
 ImageNet을 B = 8,192로 1시간에 학습시킬 때 쓴 규칙입니다(초반 워밍업을 함께 씀).
 다만 노이즈는 1/√k로만 줄어드는데(§4) 걸음은 k배로 키우는 것이라 무한정 통하지는 않습니다 — 어느 배치 크기부터는 깨집니다.
+GPU를 여러 장 쓰는 것이 곧 배치를 키우는 것인 이유는 <a href="#s9">§9</a>에서 확인합니다.
 </p>
 
 <h3>3. 이름의 혼선 — 프레임워크의 <code>SGD</code>는 B=1이 아니다</h3>
@@ -591,8 +593,150 @@ ImageNet을 B = 8,192로 1시간에 학습시킬 때 쓴 규칙입니다(초반 
 <a href="https://dev-jonghoonpark.github.io/how-gradient-descent-works/" target="_blank" rel="noopener">How Gradient Descent Works</a>에서 다룹니다.
 </p>
 
+
 <!-- ================================================================ -->
-<h2 id="s9">§9 정리 — 한 문장으로</h2>
+<h2 id="s9">§9 여러 대로 나눠 돌리기 — 동기 SGD와 비동기 SGD</h2>
+
+<p>
+한 대로는 부족할 때 워커 K대에 데이터를 나눕니다(데이터 병렬).
+각 워커는 <strong>자기 몫의 미니배치 B개로 기울기를 계산</strong>하는데, 그 다음이 문제입니다 —
+<strong>다른 워커를 기다릴 것인가, 말 것인가.</strong> 이 한 가지 선택이 동기 SGD와 비동기 SGD를 가릅니다.
+</p>
+
+<h3>동기 SGD — 전원이 같은 θ에서 출발한다</h3>
+
+<p>
+모든 워커가 <strong>같은 θ<sub>t</sub></strong>로 기울기를 계산하고, 다 모아 평균 낸 뒤 한 번 갱신합니다
+(이 "다 모아 평균 내기"가 <strong>all-reduce</strong>입니다).
+</p>
+
+<div class="eq">
+θ<sub>t+1</sub> = θ<sub>t</sub> − η · (1/K) Σ<sub>k=1..K</sub> g<sub>B</sub><sup>(k)</sup>(θ<sub>t</sub>)
+<span class="cap">K개 미니배치의 평균 = K·B개짜리 미니배치 하나의 기울기 — <strong>완전히 같은 식</strong>입니다</span>
+</div>
+
+<div class="note">
+<strong>동기 SGD는 새로운 알고리즘이 아닙니다.</strong> 워커 8대가 각자 64개씩 보는 것은
+<strong>한 대가 512개를 보는 것과 수학적으로 동일</strong>합니다(아래 데모에서 두 궤적의 차이가 10<sup>−16</sup> 수준임을 확인합니다).
+그래서 §4의 1/√B도, §8의 선형 스케일링 법칙도 그대로 적용됩니다 —
+<strong>GPU를 8장으로 늘리는 것은 배치를 8배로 키우는 것</strong>이고, 그러면 학습률도 따라 올려야 합니다.
+한 대에서 미니배치를 여러 번 나눠 계산해 더했다가 갱신하는 <code>gradient accumulation</code>도 똑같은 이야기입니다.
+</div>
+
+<p>
+대가는 <strong>동기화 장벽</strong>입니다. 매 스텝 전원을 기다리므로 <strong>가장 느린 워커가 전체 속도를 정합니다</strong>.
+한 대가 2배 느리면 8대 전체가 2배 느려집니다. 이 느린 워커를 <strong>스트래글러(straggler)</strong>라고 부릅니다.
+</p>
+
+<h3>비동기 SGD — 기다리지 않는다, 대신 낡은 θ를 쓴다</h3>
+
+<p>
+파라미터 서버를 두고, 워커는 θ를 받아 가 계산이 끝나는 대로 기울기를 밀어 넣습니다. 아무도 기다리지 않으니 노는 시간이 없습니다.
+문제는 <strong>받아 간 θ와 밀어 넣을 때의 θ가 다르다</strong>는 것입니다 — 그 사이 다른 워커들이 이미 서버를 여러 번 갱신했으니까요.
+이 시차를 <strong>지연(staleness) τ</strong>라고 하고, 워커 K대가 비슷한 속도라면 <strong>평균 τ ≈ K − 1</strong>입니다.
+</p>
+
+<div class="eq">
+θ<sub>t+1</sub> = θ<sub>t</sub> − η · g<sub>B</sub>(θ<sub><strong>t−τ</strong></sub>)
+<span class="cap">기울기를 <strong>지금 위치가 아니라 과거 위치</strong>에서 계산한다</span>
+</div>
+
+<div class="warn">
+<strong>여기서 §2의 전제가 깨집니다.</strong> 미니배치 노이즈는 <strong>평균이 0</strong>이었습니다(불편 추정량) —
+그래서 한 스텝씩은 틀려도 쌓이면 상쇄됐습니다. 그런데 지연에서 오는 오차는
+<code>E[g<sub>B</sub>(θ<sub>t−τ</sub>)] = ∇L(θ<sub>t−τ</sub>) ≠ ∇L(θ<sub>t</sub>)</code> —
+<strong>평균이 0이 아닌 편향</strong>입니다. 많이 뽑는다고 상쇄되지 않습니다.
+비동기 SGD를 "노이즈가 조금 더 낀 SGD"로 생각하면 안 되는 이유가 이것입니다.
+</div>
+
+<h3>그래서 누가 이기는가 — 벽시계 시간으로 재기</h3>
+
+<p>
+동기는 <strong>스텝당 품질</strong>이 좋고, 비동기는 <strong>시간당 스텝 수</strong>가 많습니다.
+둘을 한 축에서 비교하려면 "스텝"이 아니라 <strong>벽시계 시간</strong>으로 재야 합니다(<a href="#s5">§5</a>와 같은 논리입니다).
+아래는 워커마다 처리 시간이 다른 상황을 이산 사건으로 모의한 것입니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 8 · 동기 vs 비동기 — 벽시계 시간 경주</div>
+  <div class="demo-sub">워커 K대, 워커당 미니배치 B = 4. 1번 워커만 느리게(스트래글러) 만들 수 있습니다. 시간 단위는 "보통 워커가 미니배치 하나를 처리하는 시간".</div>
+  <div class="controls">
+    <label>워커 수 K <input type="range" id="d8K" min="2" max="16" value="8"><span class="readout" id="d8Kv">8</span></label>
+    <label>스트래글러 <input type="range" id="d8S" min="10" max="50" value="10"><span class="readout" id="d8Sv">1.0×</span></label>
+    <label>학습률 η <input type="range" id="d8E" min="2" max="30" value="5"><span class="readout" id="d8Ev">0.05</span></label>
+    <button id="d8Run">다시 달리기</button>
+  </div>
+  <canvas id="d8c" width="820" height="360"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--s1)"></span>동기 SGD (all-reduce)</span>
+    <span><span class="sw" style="background:var(--s2)"></span>비동기 SGD (파라미터 서버)</span>
+  </div>
+  <div class="stats">
+    <div class="stat">동기 라운드 수<b id="d8sr">–</b></div>
+    <div class="stat">비동기 갱신 수<b id="d8ar">–</b></div>
+    <div class="stat">비동기 평균 지연 τ<b id="d8st">–</b></div>
+    <div class="stat" style="border-color:var(--s1)">동기 최종 L−L*<b id="d8sf">–</b></div>
+    <div class="stat" style="border-color:var(--s2)">비동기 최종 L−L*<b id="d8af">–</b></div>
+    <div class="stat hl">동기 ≡ 배치 K·B 검증<b id="d8eq">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    스트래글러가 1.0×면 동기가 이깁니다 — 같은 시간에 처리하는 샘플 수가 비슷한데 동기 쪽 기울기가 더 정확하니까요.
+    스트래글러를 4×로 올려 보세요. 동기는 매 라운드 그 한 대를 기다리느라 라운드 수가 3분의 1 아래로(101 → 30) 줄지만, 비동기는 956 → 867로 거의 그대로입니다.
+    <strong>비동기가 존재하는 이유는 "더 좋은 기울기"가 아니라 "놀지 않는 워커"</strong>입니다.
+    그리고 같은 조건에서 η를 0.12로 올려 보세요 — 이번엔 지연이 발목을 잡아 순서가 다시 뒤집힙니다(동기 0.0003 vs 비동기 0.0825). K를 16으로 올리면 비동기는 아예 발산합니다.
+  </p>
+</div>
+
+<h3>비동기의 진짜 비용 — 학습률 상한이 내려간다</h3>
+
+<p>
+지연이 있으면 "지금 있지도 않은 위치의 기울기"로 걷는 셈이라, 걸음이 크면 목표를 지나쳐 진동합니다.
+아래 격자는 지연 τ와 학습률 η를 바꿔 가며 <strong>같은 400번의 갱신</strong> 뒤 남은 거리를 잰 것입니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 9 · 지연 τ × 학습률 η 안정성 격자</div>
+  <div class="demo-sub">모든 칸이 400번 갱신 · B = 4 · 같은 시작점. 칸의 값은 L(θ) − L*이고, 발산하면 "발산"으로 표시합니다.</div>
+  <div class="controls">
+    <button id="d9Run">다시 계산</button>
+    <span class="meta">τ = 0이 동기 SGD, τ ≈ K−1이 워커 K대짜리 비동기 SGD입니다.</span>
+  </div>
+  <div class="scrollx"><table class="tbl" id="d9t"></table></div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    τ = 0 줄은 η를 0.30까지 올려도 멀쩡합니다. τ = 16 줄은 η = 0.10에서 이미 터집니다.
+    <strong>워커를 늘릴수록(τ가 커질수록) 쓸 수 있는 학습률이 작아진다</strong> — 비동기의 확장성이 여기서 막힙니다.
+    동기 SGD는 정반대로, 워커를 늘리면 배치가 커져서 학습률을 <em>올릴</em> 수 있습니다(§8 선형 스케일링).
+  </p>
+</div>
+
+<h3>Deep Speech 2가 동기를 고른 이유</h3>
+
+<p>
+2015년의 주류는 파라미터 서버 + 비동기 SGD였습니다. DS2는 정반대로 갔고, 근거가 정확도가 아니었습니다.
+</p>
+
+<blockquote>
+We find synchronous SGD useful because it is <strong>reproducible and deterministic</strong>.
+We have found that the appearance of non-determinism in our system often signals a serious bug. — Amodei et al., 4.1절
+</blockquote>
+
+<p>
+비동기 SGD는 <strong>같은 코드를 두 번 돌려도 결과가 다릅니다</strong> — 어느 워커의 기울기가 몇 번째로 도착했는지가 매번 달라지니까요.
+그러면 "어제보다 나빠졌는데 이게 내 코드 탓인지 운 탓인지"를 가릴 수가 없습니다.
+DS2는 <strong>디버깅 가능성</strong>을 근거로 동기 SGD를 고르고, 대신 통신을 직접 최적화했습니다(링 all-reduce 직접 구현, GPU 8장 이하에서 OpenMPI 대비 최대 20배).
+자세한 내용은 <a href="https://dev-jonghoonpark.github.io/how-deep-speech-2-works/#s11" target="_blank" rel="noopener">How Deep Speech 2 Works §11</a>에 있습니다.
+</p>
+
+<div class="note">
+<strong>오늘날.</strong> NCCL·InfiniBand·NVLink로 all-reduce가 싸지고, 선형 스케일링 법칙과 워밍업으로 큰 배치를 다루는 법이 정리되면서
+<strong>동기 all-reduce가 사실상 표준</strong>이 됐습니다(PyTorch <code>DistributedDataParallel</code>이 하는 일이 바로 이것입니다).
+비동기가 여전히 쓰이는 곳은 워커 성능이 제각각이거나 중간에 사라질 수 있는 환경(선점형 인스턴스, 연합 학습),
+또는 갱신이 희소해서 충돌이 거의 없는 경우입니다 —
+잠금 없이 공유 메모리를 덮어쓰는 <a href="https://arxiv.org/abs/1106.5730" target="_blank" rel="noopener">Hogwild!(2011)</a>가 후자의 대표입니다.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s10">§10 정리 — 한 문장으로</h2>
 
 <div class="note" style="font-size:1rem">
 <strong>GD는 손실의 진짜 기울기를 쓰고, SGD는 그 기울기의 <em>불편 추정량</em>을 씁니다.</strong>
@@ -607,10 +751,11 @@ ImageNet을 B = 8,192로 1시간에 학습시킬 때 쓴 규칙입니다(초반 
 <li><strong>"1 에폭"은 진척도의 단위가 아니다.</strong> 같은 1 에폭이 GD에겐 1스텝, B=256·N=128만이면 5,005스텝입니다.</li>
 <li><strong>상수 학습률로는 수렴하지 않는다.</strong> 손실 곡선이 평평해진 것은 "다 배웠다"가 아니라 "노이즈 볼에 닿았다"일 수 있습니다 — 학습률을 낮춰 보면 구분됩니다.</li>
 <li><strong>노이즈가 크다고 좋은 게 아니다.</strong> 탈출에는 유리하지만 정착에는 불리합니다. 그래서 초반엔 크게, 후반엔 작게 씁니다.</li>
+<li><strong>GPU를 늘리는 것은 새로운 알고리즘이 아니다.</strong> 동기 SGD는 배치를 키우는 것과 정확히 같은 일이고, 비동기 SGD만이 다른 물건입니다 — 지연된 기울기는 <em>편향</em>이라 §2의 "평균 내면 맞는다"가 통하지 않습니다.</li>
 </ol>
 
 <!-- ================================================================ -->
-<h2 id="s10">§10 이해도 퀴즈</h2>
+<h2 id="s11">§11 이해도 퀴즈</h2>
 
 <div id="quizzes"></div>
 
@@ -888,6 +1033,11 @@ var D1 = (function () {
     ctx.fillText('θ = (' + fmt(st.w) + ', ' + fmt(st.b) + ')', x0 + 9, y0 - 9);
     ctx.textAlign = 'right'; ctx.fillStyle = css('--muted');
     ctx.fillText('화살표 = 내리막 방향 −g · 길이는 모두 같은 배율로 정규화', cv._logicalW - 10, 18);
+    if (st.B === N) {
+      ctx.textAlign = 'center'; ctx.font = '12.5px ui-monospace, monospace'; ctx.fillStyle = css('--accent-ink');
+      ctx.fillText('B = N = 40 → 미니배치가 곧 전체 데이터. 세 화살표가 완전히 겹치고 오차는 정확히 0 — 이것이 GD입니다.',
+        cv._logicalW / 2, cv._logicalH - 16);
+    }
     document.getElementById('d1n').textContent = comma(st.list.length);
     document.getElementById('d1g').textContent = '(' + fmt(G[0]) + ', ' + fmt(G[1]) + ')';
   }
@@ -1403,6 +1553,161 @@ var D7 = (function () {
   return { draw: draw };
 })();
 
+/* ================= 실험 8 · 동기 vs 비동기 벽시계 경주 ================= */
+var D8 = (function () {
+  var cv = document.getElementById('d8c');
+  setupHiDPI(cv);
+  var B = 4, TEND = 120, START = [-0.6, 3.4];
+  function mkStream(seed, chunk) {
+    // 셔플한 순서에서 chunk개를 끊어 준다. chunk > N이면 에폭 경계를 넘어가며 이어 뽑는다
+    // (K·B가 N보다 커도 빈 배치가 생기지 않도록).
+    var rnd = mulberry32(seed), o = shuffled(rnd), p = 0;
+    return function () {
+      var out = [];
+      while (out.length < chunk) {
+        if (p >= N) { o = shuffled(rnd); p = 0; }
+        out.push(o[p++]);
+      }
+      return out;
+    };
+  }
+  function sim(K, strag, eta) {
+    var ex0 = loss(START[0], START[1]) - LOPT;
+    // 워커별 처리 시간: 0번만 느리다. 동기·비동기가 같은 시간 분포를 쓰도록 시드를 맞춘다.
+    function mkDur(seed) {
+      var rnd = mulberry32(seed);
+      return function (i) { return (i === 0 ? strag : 1) * (0.75 + 0.5 * rnd()); };
+    }
+    // --- 동기 (+ 배치 K·B 단일 노드와의 동치 검증) ---
+    var durS = mkDur(4242), st = mkStream(7, K * B), st2 = mkStream(7, K * B);
+    var w = START[0], b = START[1], w2 = START[0], b2 = START[1];
+    var t = 0, rounds = 0, maxdiff = 0, sync = [[0, ex0]], sdiv = false;
+    while (t < TEND) {
+      var mx = 0;
+      for (var k = 0; k < K; k++) mx = Math.max(mx, durS(k));
+      t += mx;
+      var ch = st(), gw = 0, gb = 0;
+      for (k = 0; k < K; k++) {
+        var g = batchGrad(ch.slice(k * B, (k + 1) * B), w, b);
+        gw += g[0] / K; gb += g[1] / K;
+      }
+      w -= eta * gw; b -= eta * gb; rounds++;
+      var g2 = batchGrad(st2(), w2, b2);
+      w2 -= eta * g2[0]; b2 -= eta * g2[1];
+      maxdiff = Math.max(maxdiff, Math.abs(w - w2), Math.abs(b - b2));
+      if (!isFinite(w)) { sdiv = true; break; }
+      sync.push([t, Math.max(1e-9, loss(w, b) - LOPT)]);
+    }
+    var sfinal = sdiv ? Infinity : loss(w, b) - LOPT;
+    // --- 비동기 ---
+    var durA = mkDur(4242), streams = [];
+    for (var i = 0; i < K; i++) streams.push(mkStream(100 + i, B));
+    w = START[0]; b = START[1];
+    var upd = 0, stal = 0, asyn = [[0, ex0]], adiv = false, ev = [];
+    for (i = 0; i < K; i++) ev.push({ t: durA(i), i: i, sw: w, sb: b, u: 0 });
+    for (var guard = 0; guard < 40000; guard++) {
+      var mi = 0;
+      for (var j = 1; j < K; j++) if (ev[j].t < ev[mi].t) mi = j;
+      var e = ev[mi];
+      if (e.t > TEND) break;
+      var ga = batchGrad(streams[e.i](), e.sw, e.sb);
+      w -= eta * ga[0]; b -= eta * ga[1]; upd++;
+      stal += upd - 1 - e.u;
+      if (!isFinite(w) || Math.abs(w) > 1e8) { adiv = true; break; }
+      asyn.push([e.t, Math.max(1e-9, loss(w, b) - LOPT)]);
+      ev[mi] = { t: e.t + durA(e.i), i: e.i, sw: w, sb: b, u: upd };
+    }
+    return {
+      sync: sync, asyn: asyn, rounds: rounds, upd: upd,
+      stal: upd ? stal / upd : 0, maxdiff: maxdiff,
+      sfinal: sfinal, afinal: adiv ? Infinity : loss(w, b) - LOPT, ex0: ex0
+    };
+  }
+  function draw() {
+    var K = +document.getElementById('d8K').value;
+    var strag = +document.getElementById('d8S').value / 10;
+    var eta = +document.getElementById('d8E').value / 100;
+    var r = sim(K, strag, eta);
+    var lo = -4, hi = Math.ceil(Math.log10(r.ex0));
+    var ytk = [];
+    for (var k = lo; k <= hi; k++) ytk.push({ v: k, label: '1e' + k });
+    var xtk = [];
+    for (var x = 0; x <= TEND; x += 20) xtk.push({ v: x, label: '' + x });
+    var ax = makeAxes(cv, 0, TEND, lo, hi, {
+      xlabel: '벽시계 시간 (모의 단위) →', ylabel: 'L(θ) − L* (로그)', yticks: ytk, xticks: xtk
+    });
+    function L(pts) {
+      return pts.filter(function (p) { return isFinite(p[1]) && p[1] > 0; })
+        .map(function (p) { return [p[0], Math.max(lo, Math.log10(p[1]))]; });
+    }
+    polyline(ax, L(r.sync), css('--s1'), 2.2);
+    polyline(ax, L(r.asyn), css('--s2'), 1.6);
+    document.getElementById('d8sr').textContent = comma(r.rounds) + '회';
+    document.getElementById('d8ar').textContent = comma(r.upd) + '회';
+    document.getElementById('d8st').textContent = fmt(r.stal, 1) + ' (K−1 = ' + (K - 1) + ')';
+    document.getElementById('d8sf').textContent = isFinite(r.sfinal) ? fmt(r.sfinal, 4) : '발산';
+    document.getElementById('d8af').textContent = isFinite(r.afinal) ? fmt(r.afinal, 4) : '발산';
+    document.getElementById('d8eq').textContent = isFinite(r.maxdiff) ? '차이 ' + r.maxdiff.toExponential(1) : '–';
+  }
+  document.getElementById('d8Run').addEventListener('click', draw);
+  document.getElementById('d8K').addEventListener('input', function (e) {
+    document.getElementById('d8Kv').textContent = e.target.value; draw();
+  });
+  document.getElementById('d8S').addEventListener('input', function (e) {
+    document.getElementById('d8Sv').textContent = (+e.target.value / 10).toFixed(1) + '×'; draw();
+  });
+  document.getElementById('d8E').addEventListener('input', function (e) {
+    document.getElementById('d8Ev').textContent = (+e.target.value / 100).toFixed(2); draw();
+  });
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 실험 9 · 지연 × 학습률 격자 ================= */
+var D9 = (function () {
+  var TAUS = [0, 1, 2, 4, 8, 16], ETAS = [0.02, 0.05, 0.10, 0.15, 0.20, 0.30];
+  var B = 4, T = 400, START = [-0.6, 3.4];
+  function run(tau, eta) {
+    var rnd = mulberry32(77), o = shuffled(rnd), p = 0;
+    var w = START[0], b = START[1], hw = [w], hb = [b];
+    for (var t = 0; t < T; t++) {
+      if (p + B > N) { o = shuffled(rnd); p = 0; }
+      var idx = o.slice(p, p + B); p += B;
+      var j = Math.max(0, hw.length - 1 - tau);
+      var g = batchGrad(idx, hw[j], hb[j]);
+      w -= eta * g[0]; b -= eta * g[1];
+      hw.push(w); hb.push(b);
+      if (!isFinite(w) || Math.abs(w) > 1e8) return null;
+    }
+    return loss(w, b) - LOPT;
+  }
+  function cellStyle(v) {
+    if (v === null) return 'background:color-mix(in srgb, var(--crit) 30%, var(--surface));color:var(--crit);font-weight:700';
+    var l = Math.log10(Math.max(1e-5, v));
+    var t = Math.max(0, Math.min(1, (l + 4) / 5));
+    return 'background:color-mix(in srgb, var(--crit) ' + Math.round(t * 48) + '%, var(--accent-soft))';
+  }
+  function draw() {
+    var h = '<thead><tr><th class="rowhead">지연 τ \\ 학습률 η</th>';
+    ETAS.forEach(function (e) { h += '<th class="mono">' + e.toFixed(2) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    TAUS.forEach(function (tau) {
+      h += '<tr><td class="rowhead">τ = ' + tau + (tau === 0 ? ' <small>(동기)</small>' : ' <small>(K≈' + (tau + 1) + ')</small>') + '</td>';
+      ETAS.forEach(function (e) {
+        var v = run(tau, e);
+        var txt = v === null ? '발산' : (v < 100 ? fmt(v, 4) : v.toExponential(0));
+        h += '<td class="mono" style="' + cellStyle(v) + '">' + txt + '</td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody>';
+    document.getElementById('d9t').innerHTML = h;
+  }
+  document.getElementById('d9Run').addEventListener('click', draw);
+  draw();
+  return { draw: draw };
+})();
+
 /* ================= 퀴즈 ================= */
 (function () {
   var QS = [
@@ -1443,6 +1748,18 @@ var D7 = (function () {
       e: '상수 η는 Ση = ∞(만족)이지만 Ση² = ∞(위반)입니다. 노이즈의 누적이 사그라들지 않아 수렴하지 못하고 맴돕니다. η_t = η₀/t는 둘 다 만족합니다.'
     },
     {
+      q: 'GPU 8장으로 동기 SGD(all-reduce)를 돌립니다. GPU당 미니배치가 64라면, 이것은 무엇과 같나요?',
+      opts: ['배치 64짜리 SGD를 8번 돌리는 것', '배치 512짜리 SGD 한 번', '배치 8짜리 SGD', '비동기 SGD와 같다'],
+      a: 1,
+      e: 'K개 미니배치의 평균은 K·B개짜리 미니배치 하나의 기울기와 완전히 같은 식입니다(실험 8에서 두 궤적의 차이가 10⁻¹⁶ 수준임을 확인할 수 있습니다). 그래서 GPU를 늘리는 것은 배치를 키우는 것이고, 학습률도 따라 올려야 합니다(선형 스케일링 법칙).'
+    },
+    {
+      q: '비동기 SGD의 지연된 기울기가 미니배치 노이즈와 근본적으로 다른 점은?',
+      opts: ['크기가 더 크다', '평균이 0이 아니다(편향)', '배치를 키우면 사라진다', '학습률과 무관하다'],
+      a: 1,
+      e: '미니배치 노이즈는 E[g_B] = ∇L(θ_t)로 불편 추정량이라 쌓이면 상쇄됩니다. 지연된 기울기는 E[g] = ∇L(θ_{t−τ}) ≠ ∇L(θ_t)라 평균이 0이 아닌 편향이고, 많이 뽑아도 상쇄되지 않습니다. 실험 9처럼 쓸 수 있는 학습률의 상한이 내려가는 이유입니다.'
+    },
+    {
       q: 'PyTorch에서 torch.optim.SGD를 쓰면 배치 크기는 1인가요?',
       opts: ['그렇다', '아니다 — 배치 크기는 DataLoader가 정한다', 'momentum을 주면 1이 된다', '자동으로 32가 된다'],
       a: 1,
@@ -1472,7 +1789,7 @@ var D7 = (function () {
 /* ================= 테마 전환 시 전체 다시 그리기 ================= */
 function redrawAll() {
   _bgCache = {};
-  [D1, D2, D3, D4, D6, D7].forEach(function (d) { if (d && d.draw) d.draw(); });
+  [D1, D2, D3, D4, D6, D7, D8, D9].forEach(function (d) { if (d && d.draw) d.draw(); });
 }
 </script>
 </body>
