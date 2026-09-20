@@ -1,0 +1,1468 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="확률적 경사 하강법(SGD) 인터랙티브 교육 자료 — 미니배치 기울기가 왜 진짜 기울기의 불편 추정량인지, 노이즈가 1/√B로 줄어드는 것, 같은 계산 예산에서 GD와 SGD의 승부, 지역 최솟값 탈출, 노이즈 볼과 학습률 감쇠까지 브라우저에서 직접 실험">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B2%3C/text%3E%3C/svg%3E">
+<meta charset="utf-8">
+<title>SGD는 어떻게 동작하는가 — 전부 보지 않고 내려가는 법</title>
+
+<style>
+/* ---------- tokens ---------- */
+:root {
+  color-scheme: light;
+  --bg: #f6f7f5; --surface: #fdfdfc; --surface2: #eff1ee;
+  --ink: #171a18; --ink2: #565b57; --muted: #898781;
+  --line: #e1e0d9; --hairline: rgba(11,11,11,0.10);
+  --accent: #157a63; --accent-soft: #ddeee7; --accent-ink: #0d5c4a;
+  --code-bg: #eef1ee;
+  --s1: #2a78d6;   /* GD / 전체 배치 */
+  --s2: #eb6834;   /* SGD / B=1 */
+  --s3: #8a5fd0;   /* 미니배치 */
+  --good: #0ca30c; --crit: #d03b3b; --grid: #e1e0d9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0f1211; --surface: #181c1a; --surface2: #202522;
+    --ink: #edf0ed; --ink2: #aab3ac; --muted: #898781;
+    --line: #262b28; --hairline: rgba(255,255,255,0.10);
+    --accent: #43c3a0; --accent-soft: #14352c; --accent-ink: #6fd7ba;
+    --code-bg: #141816; --s1: #5b9cf0; --s2: #e9743f; --s3: #a583e2; --grid: #2c2c2a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1211; --surface: #181c1a; --surface2: #202522;
+  --ink: #edf0ed; --ink2: #aab3ac; --muted: #898781;
+  --line: #262b28; --hairline: rgba(255,255,255,0.10);
+  --accent: #43c3a0; --accent-soft: #14352c; --accent-ink: #6fd7ba;
+  --code-bg: #141816; --s1: #5b9cf0; --s2: #e9743f; --s3: #a583e2; --grid: #2c2c2a;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7f5; --surface: #fdfdfc; --surface2: #eff1ee;
+  --ink: #171a18; --ink2: #565b57; --muted: #898781;
+  --line: #e1e0d9; --hairline: rgba(11,11,11,0.10);
+  --accent: #157a63; --accent-soft: #ddeee7; --accent-ink: #0d5c4a;
+  --code-bg: #eef1ee; --s1: #2a78d6; --s2: #eb6834; --s3: #8a5fd0; --grid: #e1e0d9;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", Pretendard, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  line-height: 1.72; margin: 0; -webkit-font-smoothing: antialiased;
+}
+main { max-width: 880px; margin: 0 auto; padding: 28px 20px 90px; }
+h1 { font-size: 1.72rem; line-height: 1.35; letter-spacing: -0.015em; margin: 8px 0 10px; }
+h2 { font-size: 1.28rem; letter-spacing: -0.01em; margin: 60px 0 12px; padding-top: 18px; border-top: 1px solid var(--line); }
+h3 { font-size: 1.04rem; margin: 26px 0 8px; }
+p { margin: 12px 0; }
+a { color: var(--accent-ink); }
+code {
+  background: var(--code-bg); border-radius: 5px; padding: 1px 6px;
+  font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.87em;
+}
+pre {
+  background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; overflow-x: auto; line-height: 1.55; font-size: .88rem;
+}
+pre code { background: none; padding: 0; }
+blockquote { margin: 18px 0; padding: 2px 0 2px 16px; border-left: 3px solid var(--line); color: var(--ink2); font-size: .94rem; }
+strong { font-weight: 700; }
+ul, ol { padding-left: 22px; }
+li { margin: 6px 0; }
+.lede { color: var(--ink2); font-size: 1.02rem; }
+.kicker {
+  display: inline-block; font-size: .78rem; font-weight: 700; letter-spacing: .08em;
+  color: var(--accent-ink); background: var(--accent-soft);
+  border-radius: 999px; padding: 3px 12px; margin-bottom: 6px;
+}
+.meta { color: var(--muted); font-size: .88rem; }
+.note { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 18px 0; font-size: .95rem; }
+.warn { background: color-mix(in srgb, var(--crit) 8%, var(--surface)); border-left: 3px solid var(--crit); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 18px 0; font-size: .95rem; }
+.demo { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin: 20px 0; }
+.demo .demo-title { font-weight: 700; font-size: .95rem; margin-bottom: 4px; }
+.demo .demo-sub { color: var(--ink2); font-size: .87rem; margin-bottom: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin: 10px 0 14px; }
+.controls label { font-size: .88rem; color: var(--ink2); }
+button {
+  background: var(--surface2); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 9px; padding: 7px 14px; font-size: .9rem; font-family: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { cursor: default; opacity: .45; }
+input[type=range] { accent-color: var(--accent); vertical-align: middle; width: 130px; }
+input[type=number] {
+  background: var(--code-bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; padding: 5px 8px; width: 108px; font-family: ui-monospace, Menlo, monospace; font-size: .88rem;
+}
+.readout {
+  display: inline-block; min-width: 2.6em; text-align: center;
+  font-family: ui-monospace, Menlo, monospace; font-size: .9rem;
+  background: var(--code-bg); border-radius: 6px; padding: 1px 8px;
+}
+.stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.stat { background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: .85rem; color: var(--ink2); }
+.stat b { display: block; font-size: 1.12rem; color: var(--ink); font-family: ui-monospace, Menlo, monospace; }
+.stat.hl { border-color: var(--accent); background: var(--accent-soft); }
+.stat.hl b { color: var(--accent-ink); }
+.stat.bad { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 9%, var(--surface)); }
+.stat.bad b { color: var(--crit); }
+canvas { max-width: 100%; display: block; border-radius: 10px; }
+.scrollx { overflow-x: auto; }
+table.tbl { border-collapse: collapse; width: 100%; font-size: .88rem; margin: 14px 0; }
+table.tbl th, table.tbl td { border: 1px solid var(--line); padding: 6px 10px; text-align: center; }
+table.tbl th { background: var(--surface2); font-weight: 600; }
+table.tbl td.rowhead, table.tbl th.rowhead { text-align: left; font-weight: 600; background: var(--surface2); }
+table.tbl td.l { text-align: left; }
+table.tbl td.hl { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+table.tbl td.bad { background: color-mix(in srgb, var(--crit) 10%, var(--surface)); color: var(--crit); font-weight: 700; }
+table.tbl td.mono, table.tbl th.mono { font-family: ui-monospace, Menlo, monospace; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .82rem; color: var(--ink2); margin-top: 8px; }
+.legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.eq {
+  background: var(--surface2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 16px; margin: 16px 0; text-align: center; font-size: 1.02rem;
+  font-family: ui-monospace, Menlo, monospace; overflow-x: auto;
+}
+.eq .cap { display: block; margin-top: 6px; font-size: .8rem; color: var(--muted); font-family: inherit; }
+.quiz { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin: 18px 0; }
+.quiz .q { font-weight: 600; margin-bottom: 12px; }
+.quiz .opts { display: grid; gap: 8px; }
+.quiz .opts button { text-align: left; padding: 10px 14px; border-radius: 9px; font-size: .92rem; }
+.quiz .opts button.correct { border-color: var(--good); background: color-mix(in srgb, var(--good) 12%, var(--surface)); }
+.quiz .opts button.wrong { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 10%, var(--surface)); }
+.quiz .expl { display: none; margin-top: 12px; font-size: .9rem; color: var(--ink2); border-top: 1px dashed var(--line); padding-top: 10px; }
+.quiz .expl.show { display: block; }
+.theme-toggle { position: fixed; top: 14px; right: 14px; z-index: 10; border-radius: 999px; padding: 6px 12px; font-size: .85rem; }
+.toc { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 22px; margin: 22px 0; font-size: .92rem; }
+.toc ol { margin: 6px 0 2px; padding-left: 20px; }
+.toc li { margin: 3px 0; }
+.toc-extra { margin: 10px 0 0; padding-top: 10px; border-top: 1px dashed var(--line); font-size: .9rem; }
+.fnref { display: inline-block; font-size: .78em; font-weight: 700; text-decoration: none; color: var(--accent-ink);
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 999px; padding: 0 8px; margin-left: 4px;
+  vertical-align: 1px; white-space: nowrap; }
+.fnback { margin-top: 22px; font-size: .88rem; }
+footer { margin-top: 70px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+@media (max-width: 620px) {
+  .demo { padding: 14px 12px; }
+  table.tbl { font-size: .78rem; }
+  table.tbl th, table.tbl td { padding: 5px 6px; }
+  input[type=range] { width: 108px; }
+}
+</style>
+</head>
+<body>
+<button class="theme-toggle" id="themeToggle" aria-label="테마 전환">🌗 테마</button>
+<main>
+
+<span class="kicker">HOW AI WORKS</span>
+<h1>SGD는 어떻게 동작하는가<br><small style="font-size:.62em;color:var(--ink2)">— 전부 보지 않고 내려가는 법</small></h1>
+<p class="lede">
+경사 하강법(GD)은 <strong>한 발짝을 떼기 위해 학습 데이터 전부를 봅니다.</strong>
+데이터가 100만 장이면 100만 번 계산해서 딱 한 번 가중치를 고칩니다.
+확률적 경사 하강법(SGD)은 <strong>그중 몇 개만 보고 그냥 갑니다.</strong>
+방향이 조금 틀려도 상관없다는 것인데 — 왜 그래도 되는지, 틀린 정도가 얼마나 되는지,
+그리고 그 "틀림"이 오히려 도움이 되는 경우까지 브라우저에서 직접 계산해 봅니다.
+</p>
+<p class="meta">
+같은 시리즈의 <a href="https://dev-jonghoonpark.github.io/how-gradient-descent-works/" target="_blank" rel="noopener">How Gradient Descent Works</a>가
+"기울기를 따라 내려간다"는 것을 다뤘다면, 이 글은 그 기울기를 <strong>표본으로 대신하는 순간</strong> 무슨 일이 벌어지는지를 다룹니다.
+원전: <a href="https://projecteuclid.org/euclid.aoms/1177729586" target="_blank" rel="noopener">Robbins &amp; Monro, <em>A Stochastic Approximation Method</em> (1951)</a>
+</p>
+
+<div class="toc">
+<strong>차례</strong>
+<ol>
+<li><a href="#s1">손실은 평균이다 — GD의 한 발짝은 왜 비싼가</a></li>
+<li><a href="#s2">표본으로 기울기를 추정한다 — 평균 내면 제자리로 온다</a></li>
+<li><a href="#s3">GD · 미니배치 · SGD — 정확히 무엇이 다른가</a></li>
+<li><a href="#s4">노이즈의 크기는 1/√B — 배치를 4배 키워야 노이즈가 절반</a></li>
+<li><a href="#s5">같은 계산 예산이면 누가 이기는가</a></li>
+<li><a href="#s6">노이즈는 버그가 아니다 — 지역 최솟값 탈출</a></li>
+<li><a href="#s7">그래서 학습률을 줄인다 — 노이즈 볼과 Robbins–Monro 조건</a></li>
+<li><a href="#s8">실전 메모 — 셔플·에폭·선형 스케일링, 그리고 이름의 혼선</a></li>
+<li><a href="#s9">정리 — 한 문장으로</a></li>
+<li><a href="#s10">이해도 퀴즈</a></li>
+</ol>
+<div class="toc-extra"><a href="#note-rm">부록 · 1951년, 신경망도 없던 시절에 이미 증명된 것 — Robbins–Monro</a></div>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s1">§1 손실은 평균이다 — GD의 한 발짝은 왜 비싼가</h2>
+
+<p>
+거의 모든 지도학습의 손실 함수는 <strong>데이터 하나하나의 손실을 평균 낸 것</strong>입니다.
+</p>
+
+<div class="eq">
+L(θ) = (1/N) · Σ<sub>i=1..N</sub> L<sub>i</sub>(θ)
+<span class="cap">θ = 가중치 · N = 학습 데이터 개수 · L<sub>i</sub> = i번째 샘플 하나의 손실</span>
+</div>
+
+<p>
+미분은 선형이므로 기울기도 그대로 평균입니다.
+</p>
+
+<div class="eq">
+∇L(θ) = (1/N) · Σ<sub>i=1..N</sub> ∇L<sub>i</sub>(θ)
+</div>
+
+<p>
+여기서 문제가 시작됩니다. 경사 하강법은 <code>θ ← θ − η∇L(θ)</code> 한 줄이지만,
+<strong>그 ∇L 하나를 얻으려면 N개 전부에 대해 순전파와 역전파를 돌려야 합니다.</strong>
+ImageNet처럼 N = 128만이면, 가중치를 <em>한 번</em> 고치려고 128만 장을 통과시키는 셈입니다.
+100번 고치려면 1억 2,800만 번. 학습이 끝나지 않습니다.
+</p>
+
+<div class="note">
+<strong>이 글에서 계속 쓸 장난감 문제.</strong> 데이터 N = 40개를 <code>y = 2x + 1 + 잡음</code>으로 만들고,
+직선 <code>ŷ = w·x + b</code>를 맞춥니다. 파라미터가 <code>(w, b)</code> 둘뿐이라
+손실 지형을 평면에 그대로 그릴 수 있고, 진짜 기울기도 정확히 계산됩니다.
+샘플 하나의 손실은 <code>L<sub>i</sub> = ½(w·x<sub>i</sub> + b − y<sub>i</sub>)²</code>,
+따라서 <code>∇L<sub>i</sub> = [(ŷ<sub>i</sub>−y<sub>i</sub>)·x<sub>i</sub>, (ŷ<sub>i</sub>−y<sub>i</sub>)]</code>입니다.
+아래 데모의 숫자는 전부 이 식을 페이지 안에서 실제로 돌린 결과입니다.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s2">§2 표본으로 기울기를 추정한다 — 평균 내면 제자리로 온다</h2>
+
+<p>
+SGD의 착상은 한 줄입니다. <strong>평균을 구하려고 전수 조사를 할 필요는 없다.</strong>
+여론조사가 5천만 명이 아니라 1천 명에게 묻듯, 기울기도 <strong>무작위로 뽑은 B개</strong>의 평균으로 대신합니다.
+</p>
+
+<div class="eq">
+g<sub>B</sub>(θ) = (1/B) · Σ<sub>i∈B</sub> ∇L<sub>i</sub>(θ)　　　　E[g<sub>B</sub>(θ)] = ∇L(θ)
+<span class="cap">B를 균등하게 무작위로 뽑는 한, 미니배치 기울기의 <strong>기댓값은 진짜 기울기와 정확히 같다</strong> (불편 추정량)</span>
+</div>
+
+<p>
+증명은 한 줄입니다. 각 샘플이 뽑힐 확률이 모두 같으니 <code>E[∇L<sub>i</sub>] = (1/N)Σ∇L<sub>j</sub> = ∇L</code>,
+그 B개의 평균도 여전히 ∇L입니다. <strong>한 스텝 한 스텝은 틀리지만, 틀린 방향이 한쪽으로 쏠려 있지 않습니다.</strong>
+아래에서 직접 확인해 보세요 — 미니배치 기울기(회색)는 제각각이지만, 그것들을 평균 내면(초록) 진짜 기울기(파랑)로 수렴합니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 1 · 미니배치 기울기는 진짜 기울기의 불편 추정량</div>
+  <div class="demo-sub">손실 지형 위 한 점에서의 기울기 화살표. 배경 등고선은 L(w, b), ★는 최적점. 평면을 클릭하면 측정 지점이 바뀝니다.</div>
+  <div class="controls">
+    <label>배치 크기 B <input type="range" id="d1B" min="1" max="40" value="4"><span class="readout" id="d1Bv">4</span></label>
+    <button id="d1One">미니배치 1개 뽑기</button>
+    <button id="d1Many">100개 뽑아 평균 내기</button>
+    <button id="d1Reset">초기화</button>
+  </div>
+  <canvas id="d1c" width="820" height="440"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--s1)"></span>진짜 기울기 ∇L (전체 40개 평균)</span>
+    <span><span class="sw" style="background:var(--muted)"></span>미니배치 기울기 g<sub>B</sub> 개별</span>
+    <span><span class="sw" style="background:var(--accent)"></span>지금까지 뽑은 g<sub>B</sub>들의 평균</span>
+  </div>
+  <div class="stats">
+    <div class="stat">뽑은 미니배치 수<b id="d1n">0</b></div>
+    <div class="stat">진짜 기울기 ∇L<b id="d1g">–</b></div>
+    <div class="stat">g<sub>B</sub> 평균<b id="d1avg">–</b></div>
+    <div class="stat hl">평균의 오차 ‖ḡ − ∇L‖<b id="d1err">–</b></div>
+    <div class="stat">개별 g<sub>B</sub>의 평균 오차<b id="d1ind">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    개별 화살표는 제각각인데(오른쪽 끝 수치) 평균의 오차는 계속 줄어듭니다. B를 키우면 개별 화살표부터 이미 촘촘해집니다 —
+    그 "촘촘해지는 속도"가 <a href="#s4">§4</a>의 주제입니다.
+  </p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s3">§3 GD · 미니배치 · SGD — 정확히 무엇이 다른가</h2>
+
+<p>
+세 방법은 <strong>서로 다른 알고리즘이 아닙니다.</strong> 갱신 규칙은 전부 똑같은 한 줄이고,
+<strong>기울기를 몇 개의 샘플로 계산하느냐(B)</strong>만 다릅니다.
+</p>
+
+<div class="eq">
+θ<sub>t+1</sub> = θ<sub>t</sub> − η · g<sub>B</sub>(θ<sub>t</sub>)
+<span class="cap">B = N이면 GD, B = 1이면 (좁은 의미의) SGD, 그 사이가 미니배치 SGD</span>
+</div>
+
+<div class="scrollx">
+<table class="tbl">
+<thead>
+<tr><th class="rowhead">　</th><th>배치 경사 하강법 (GD)</th><th>미니배치 SGD</th><th>SGD (B=1)</th></tr>
+</thead>
+<tbody>
+<tr><td class="rowhead">한 스텝에 쓰는 샘플</td><td class="mono">N (전부)</td><td class="mono">B (보통 32~512)</td><td class="mono">1</td></tr>
+<tr><td class="rowhead">1 에폭당 갱신 횟수</td><td class="mono">1</td><td class="mono">N/B</td><td class="mono">N</td></tr>
+<tr><td class="rowhead">기울기 방향</td><td>정확</td><td>기댓값은 정확, 흔들림 있음</td><td>기댓값은 정확, 매우 흔들림</td></tr>
+<tr><td class="rowhead">궤적</td><td>매끄럽게 단조 감소</td><td>지그재그로 감소</td><td>요동치며 감소</td></tr>
+<tr><td class="rowhead">GPU 활용</td><td>메모리 초과로 애초에 불가</td><td class="hl">행렬 곱으로 병렬 — 최적</td><td>병렬성 없음, 비효율</td></tr>
+<tr><td class="rowhead">수렴 지점</td><td>최솟값에 정확히 정착</td><td colspan="2">최솟값 <strong>주변</strong>을 맴돔 (노이즈 볼 · <a href="#s7">§7</a>)</td></tr>
+<tr><td class="rowhead">지역 최솟값·안장점</td><td class="bad">갇히면 못 나옴</td><td colspan="2">노이즈가 밀어내 빠져나올 수 있음 (<a href="#s6">§6</a>)</td></tr>
+<tr><td class="rowhead">데이터가 계속 들어올 때</td><td class="bad">불가 (전부를 알아야 함)</td><td colspan="2">가능 (온라인 학습)</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="warn">
+<strong>흔한 오해.</strong> "SGD는 GD의 근사라서 더 나쁜 답을 준다"가 아닙니다.
+딥러닝에서 SGD를 쓰는 이유는 <strong>메모리와 시간 때문만도 아닙니다.</strong>
+같은 계산량을 쓰면 SGD가 <em>먼저</em> 내려가고(<a href="#s5">§5</a>),
+노이즈 자체가 일반화에 도움이 된다는 것이 경험적으로 알려져 있습니다(<a href="#s6">§6</a>).
+GD는 "정확하지만 한 발짝이 너무 비싼" 방법입니다.
+</div>
+
+<p>
+아래 실험실에서 B를 움직여 보세요. <strong>B = 40(전체)으로 두면 궤적이 GD와 정확히 겹칩니다</strong> —
+같은 알고리즘이라는 게 눈으로 보입니다. B를 1로 내리면 같은 목적지를 향해 가면서도 길이 들쭉날쭉해집니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 2 · 궤적 비교 실험실</div>
+  <div class="demo-sub">같은 시작점 · 같은 학습률에서 GD(파랑)와 미니배치 SGD(주황)를 동시에 달립니다. 에폭마다 데이터를 섞어 B개씩 끊어 씁니다.</div>
+  <div class="controls">
+    <label>배치 크기 B <input type="range" id="d2B" min="1" max="40" value="1"><span class="readout" id="d2Bv">1</span></label>
+    <label>학습률 η <input type="range" id="d2E" min="1" max="60" value="12"><span class="readout" id="d2Ev">0.12</span></label>
+    <button id="d2Run" class="on">▶ 실행</button>
+    <button id="d2Step">한 스텝</button>
+    <button id="d2Reset">초기화</button>
+  </div>
+  <canvas id="d2c" width="820" height="440"></canvas>
+  <div class="stats">
+    <div class="stat">SGD 갱신 횟수<b id="d2steps">0</b></div>
+    <div class="stat">에폭<b id="d2ep">0</b></div>
+    <div class="stat" style="border-color:var(--s1)">GD 손실<b id="d2lg">–</b></div>
+    <div class="stat" style="border-color:var(--s2)">SGD 손실<b id="d2ls">–</b></div>
+    <div class="stat hl">최솟값 L*<b id="d2lo">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    같은 <em>스텝 수</em>에서는 GD가 유리해 보입니다. 당연합니다 — GD는 한 스텝마다 40개를 보고 SGD는 B개만 봅니다.
+    공정한 비교는 "스텝 수"가 아니라 <strong>"본 샘플 수"</strong>로 해야 합니다. <a href="#s5">§5</a>에서 그렇게 다시 겨룹니다.<br>
+    η를 키워 보면 차이가 하나 더 보입니다. GD는 여전히 ★에 정확히 멈추지만,
+    <strong>SGD는 ★ 주변을 도는 구름이 눈에 띄게 커집니다</strong> — 이 구름의 정체가 <a href="#s7">§7</a>입니다.
+  </p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s4">§4 노이즈의 크기는 1/√B — 배치를 4배 키워야 노이즈가 절반</h2>
+
+<p>
+미니배치 기울기는 평균적으로는 옳지만(§2), 한 번 한 번은 틀립니다. 얼마나 틀릴까요?
+독립적인 값 B개를 평균 내면 분산이 B로 나뉘는, 표본평균의 기본 성질 그대로입니다.
+</p>
+
+<div class="eq">
+E‖g<sub>B</sub> − ∇L‖² = (S² / B) · (N − B)/(N − 1)　　→　　오차 ∝ 1/√B
+<span class="cap">S² = (1/N)Σ‖∇L<sub>i</sub> − ∇L‖² (샘플 기울기의 퍼짐) · 뒤의 항은 비복원 추출 보정 — B = N이면 정확히 0</span>
+</div>
+
+<p>
+이 식이 SGD의 손익 계산서 전부입니다. <strong>배치를 2배 키우면 계산은 2배 드는데 노이즈는 √2배(≈1.41배)밖에 안 줄어듭니다.</strong>
+계산량당 노이즈 감소로 보면 큰 배치는 손해입니다. 그런데도 실무에서 B를 키우는 이유는
+GPU가 32개든 256개든 거의 같은 시간에 처리하기 때문이지, 통계적으로 이득이어서가 아닙니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 3 · 배치 크기 vs 기울기 오차 — 이론과 실측</div>
+  <div class="demo-sub">측정 지점 θ = (0.2, 3.3)에서 각 B마다 미니배치를 2,000번 뽑아 ‖g<sub>B</sub> − ∇L‖의 제곱평균제곱근(RMS)을 실측하고, 위 공식과 겹쳐 그립니다.</div>
+  <div class="controls">
+    <button id="d3Run">측정 실행</button>
+    <label><input type="checkbox" id="d3Log" checked> 로그 축</label>
+    <label><input type="checkbox" id="d3FPC" checked> 비복원 보정 항 포함</label>
+  </div>
+  <canvas id="d3c" width="820" height="340"></canvas>
+  <div class="scrollx"><table class="tbl" id="d3t"></table></div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    보정 항을 끄면(복원 추출 가정) B가 N에 가까울 때 이론이 실측보다 큽니다 — 실제로는 배치가 데이터 전체에 가까워질수록
+    "뽑을 게 남지 않아" 오차가 0으로 떨어지기 때문입니다. B = N에서 오차가 정확히 0인 것이 곧 <strong>GD</strong>입니다.
+  </p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s5">§5 같은 계산 예산이면 누가 이기는가</h2>
+
+<p>
+지금까지의 비교는 전부 불공정했습니다. 진짜 질문은 이것입니다 —
+<strong>샘플 기울기를 딱 1만 번 계산할 수 있다면, 어떻게 나눠 쓰는 게 이득인가?</strong>
+GD는 40번 계산해 1스텝, B=1은 1번 계산해 1스텝입니다. 같은 예산으로 SGD는 <strong>40배 많이 움직입니다.</strong>
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 4 · 같은 예산 경주 — x축은 스텝이 아니라 "계산한 샘플 기울기 수"</div>
+  <div class="demo-sub">네 가지 배치 크기가 동일한 예산을 쓰고, 손실(로그 축)이 어디까지 떨어지는지 겨룹니다.</div>
+  <div class="controls">
+    <label>예산 (에폭 환산) <input type="range" id="d4Bud" min="1" max="40" value="12"><span class="readout" id="d4Budv">12</span></label>
+    <label>학습률 η <input type="range" id="d4E" min="1" max="60" value="12"><span class="readout" id="d4Ev">0.12</span></label>
+    <button id="d4Run">다시 달리기</button>
+  </div>
+  <canvas id="d4c" width="820" height="360"></canvas>
+  <div class="legend" id="d4leg"></div>
+  <div class="stats" id="d4stats"></div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    초반이 승부처입니다. 기본값(η = 0.12)에서 <strong>1에폭 시점의 남은 거리는 B=1이 0.023, GD가 6.44 — 280배 차이</strong>입니다.
+    GD가 첫 한 발짝을 떼는 동안 B=1은 이미 40발짝을 갔고, 그 한 발짝 한 발짝이 틀린 방향이더라도 평균적으로는 옳은 방향이기(§2) 때문입니다.
+    대신 B=1은 금세 <strong>더 내려가지 못하고 0.0006~0.04 사이를 오르내립니다</strong> — 노이즈 바닥(<a href="#s7">§7</a>)에 닿은 것입니다.
+    12에폭까지 가면 중간 크기인 B=4·16이 가장 깊이(≈0.0009) 내려가고, GD는 그때까지도 0.08에 머뭅니다.
+    <strong>"가장 작은 배치가 항상 이긴다"가 아니라, "전체를 다 보는 것은 거의 항상 손해다"가 결론입니다.</strong>
+  </p>
+</div>
+
+<div class="demo">
+  <div class="demo-title">실험 5 · 실제 규모에서의 갱신 횟수 계산기</div>
+  <div class="demo-sub">"1 에폭"이 GD에게는 한 발짝, SGD에게는 수만 발짝이라는 것을 숫자로 확인합니다.</div>
+  <div class="controls">
+    <label>데이터 수 N <input type="number" id="d5N" value="1281167"></label>
+    <label>배치 크기 B <input type="number" id="d5B" value="256"></label>
+    <label>에폭 <input type="number" id="d5EP" value="90"></label>
+  </div>
+  <div class="stats">
+    <div class="stat">GD 총 갱신 횟수<b id="d5gd">–</b></div>
+    <div class="stat hl">미니배치 SGD 총 갱신 횟수<b id="d5sgd">–</b></div>
+    <div class="stat">배수<b id="d5ratio">–</b></div>
+    <div class="stat">둘의 총 기울기 계산량<b id="d5cost">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    기본값은 ImageNet(N = 1,281,167) · B = 256 · 90에폭입니다. <strong>계산량은 완전히 같은데</strong>
+    가중치를 고치는 횟수가 90번이냐 45만 번이냐로 갈립니다. GD로 딥러닝이 불가능한 이유가 이 한 줄입니다.
+  </p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s6">§6 노이즈는 버그가 아니다 — 지역 최솟값 탈출</h2>
+
+<p>
+여기까지는 노이즈를 "참고 견디는 비용"으로 다뤘습니다. 그런데 노이즈에는 GD가 절대 할 수 없는 일이 하나 있습니다.
+<strong>GD는 기울기가 0인 곳에 도착하면 영원히 멈춥니다.</strong> 그곳이 전체 최솟값이든, 얕은 웅덩이든, 안장점이든 똑같습니다.
+<code>∇L = 0 → θ ← θ − η·0 → 제자리</code>. 반면 SGD의 기울기는 그 지점에서도 0이 아닙니다 —
+<strong>평균이 0일 뿐</strong>이라 계속 흔들리고, 운이 좋으면 언덕을 넘어갑니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 6 · 노이즈 크기에 따른 탈출률</div>
+  <div class="demo-sub">오른쪽 얕은 웅덩이에서 출발합니다. 왼쪽에 더 깊은 진짜 최솟값이 있습니다. 노이즈 σ = 0이 곧 GD입니다.</div>
+  <div class="controls">
+    <label>기울기 노이즈 σ <input type="range" id="d6S" min="0" max="60" value="0"><span class="readout" id="d6Sv">0.0</span></label>
+    <label>학습률 η <input type="range" id="d6E" min="1" max="30" value="8"><span class="readout" id="d6Ev">0.08</span></label>
+    <button id="d6One">공 하나 굴리기</button>
+    <button id="d6Many">300번 굴려 탈출률 측정</button>
+    <button id="d6Reset">초기화</button>
+  </div>
+  <canvas id="d6c" width="820" height="360"></canvas>
+  <div class="stats">
+    <div class="stat">현재 위치 w<b id="d6w">–</b></div>
+    <div class="stat">밟은 스텝<b id="d6t">–</b></div>
+    <div class="stat hl">탈출률 (300회 중)<b id="d6rate">–</b></div>
+    <div class="stat">깊은 최솟값 도달<b id="d6deep">–</b></div>
+    <div class="stat bad">어느 쪽에도 못 앉음<b id="d6none">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    σ = 0에서 탈출률은 <strong>정확히 0%</strong>입니다 — GD는 얕은 웅덩이에서 절대 못 나옵니다.
+    σ를 올리면 탈출률이 오르지만, 너무 올리면 깊은 웅덩이에서도 튕겨 나와
+    <em>"어느 쪽에도 못 앉음"</em>이 늘어납니다. 이 맞교환이 <a href="#s7">§7</a>의 학습률 감쇠로 이어집니다.
+  </p>
+</div>
+
+<div class="warn">
+<strong>과장하지 않기.</strong> 이 데모는 노이즈를 "기울기에 더해지는 평균 0의 난수"로 단순화한 1차원 모형입니다.
+실제 SGD의 노이즈는 위치에 따라 크기와 방향이 달라지고(샘플마다 손실 지형이 다르므로), 가우시안도 아닙니다.
+또한 깊은 신경망에서 학습을 방해하는 것은 지역 최솟값보다 <strong>안장점</strong>이라는 관점이 우세합니다
+(<a href="https://arxiv.org/abs/1406.2572" target="_blank" rel="noopener">Dauphin et al., 2014</a>).
+"노이즈가 있으면 정지점에 갇히지 않는다"는 결론은 같지만, 웅덩이 그림 그대로를 고차원에 옮기면 안 됩니다.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s7">§7 그래서 학습률을 줄인다 — 노이즈 볼과 Robbins–Monro 조건</h2>
+
+<p>
+학습률 η를 상수로 두면 SGD는 최솟값에 <strong>정착하지 못합니다.</strong>
+최솟값에 도착해도 g<sub>B</sub>가 0이 아니라서 계속 걷어차이기 때문입니다.
+결국 최솟값을 중심으로 한 일정 반경의 구름 안을 맴도는데, 이걸 <strong>노이즈 볼</strong>이라고 부릅니다.
+그 반경은 대략 <code>√(η·S²)</code>에 비례합니다 — <strong>η를 1/4로 줄이면 반경이 절반</strong>이 됩니다.
+</p>
+
+<div class="demo">
+  <div class="demo-title">실험 7 · 상수 학습률의 바닥 vs 감쇠 학습률</div>
+  <div class="demo-sub">B = 1로 20회 독립 실행한 평균 거리 ‖θ<sub>t</sub> − θ*‖를 로그 축에 그립니다. η 상수 두 가지와 η<sub>t</sub> = η₀/(1 + t/τ) 하나.</div>
+  <div class="controls">
+    <label>η₀ <input type="range" id="d7E" min="2" max="40" value="8"><span class="readout" id="d7Ev">0.08</span></label>
+    <label>감쇠 τ <input type="range" id="d7T" min="20" max="600" value="80" step="10"><span class="readout" id="d7Tv">80</span></label>
+    <label><input type="checkbox" id="d7IID" checked> 매 스텝 i.i.d. 추출</label>
+    <button id="d7Run">다시 실행</button>
+  </div>
+  <canvas id="d7c" width="820" height="360"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--s2)"></span>상수 η₀</span>
+    <span><span class="sw" style="background:var(--s3)"></span>상수 η₀/4</span>
+    <span><span class="sw" style="background:var(--accent)"></span>감쇠 η₀/(1+t/τ)</span>
+  </div>
+  <div class="stats">
+    <div class="stat">η₀의 바닥<b id="d7f1">–</b></div>
+    <div class="stat">η₀/4의 바닥<b id="d7f2">–</b></div>
+    <div class="stat hl">바닥 비율<b id="d7r">–</b></div>
+    <div class="stat">감쇠 쪽 최종 거리<b id="d7f3">–</b></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--ink2);margin-bottom:0">
+    상수 학습률 두 줄은 각자 다른 높이에서 평평해집니다. η를 1/4로 줄였을 때 바닥이 <strong>약 2배</strong> 낮아지는지 확인해 보세요 —
+    √η 법칙 그대로입니다. "학습률을 10배 줄였더니 손실이 뚝 떨어지는" 계단식 스케줄이 실제로 하는 일이 이것입니다.
+    반면 감쇠 학습률(초록)은 바닥 없이 계속 내려갑니다.
+  </p>
+</div>
+
+<div class="note">
+<strong>체크박스를 꺼 보세요 — 실무 방식이 이론보다 빠릅니다.</strong>
+위 데모는 기본적으로 <strong>매 스텝 독립적으로 한 개를 뽑습니다(i.i.d.)</strong>. 교과서 이론이 가정하는 방식이고,
+바닥 비율이 √4 = 2로 맞아떨어집니다. 체크를 끄면 <strong>에폭마다 섞어 한 번씩 쓰는</strong> 실제 <code>DataLoader</code> 방식이 되는데,
+이때 바닥 비율은 <strong>3 이상</strong>으로 커집니다 — 같은 η에서 바닥이 더 낮다는 뜻입니다.
+한 에폭 안에서 모든 샘플이 정확히 한 번씩 쓰이므로 <strong>기울기 오차가 에폭 안에서 서로 상쇄되기</strong> 때문입니다
+(random reshuffling이 i.i.d. SGD보다 빠르다는, 이론적으로도 알려진 현상 —
+<a href="https://arxiv.org/abs/1510.08560" target="_blank" rel="noopener">Gürbüzbalaban et al., 2015</a>).
+셔플이 그저 구현 편의가 아니라는 근거입니다.
+</div>
+
+<p>
+언제까지 줄여야 할까요? 1951년 Robbins와 Monro가 이미 답을 내놨습니다.
+<strong>충분히 많이 걸을 수 있을 만큼 크되, 노이즈가 결국 사그라들 만큼 작아야 한다</strong>는 두 조건입니다.
+</p>
+
+<div class="eq">
+Σ<sub>t</sub> η<sub>t</sub> = ∞　　그리고　　Σ<sub>t</sub> η<sub>t</sub>² &lt; ∞
+<span class="cap">앞 조건: 아무리 멀리 있어도 도달할 수 있다 · 뒤 조건: 노이즈의 누적 효과가 유한하다</span>
+</div>
+
+<p>
+<code>η<sub>t</sub> = η₀/t</code>는 둘 다 만족하고(조화급수는 발산, 제곱합은 수렴), <code>η<sub>t</sub> = η₀/√t</code>는 두 번째를 어기며,
+상수 η는 첫 번째만 만족합니다 — 그래서 상수 η는 수렴하지 않고 노이즈 볼 안을 맴돕니다. 위 실험이 보여준 그대로입니다.
+</p>
+
+<div class="note">
+그렇다고 실무에서 <code>1/t</code>를 쓰지는 않습니다. 너무 빨리 줄어들어 학습이 조기에 멈추기 때문입니다.
+현실에서는 계단식 감쇠(30에폭마다 ÷10), 코사인 감쇠, 초반에 오히려 올리는 워밍업 등을 씁니다.
+이론적 수렴 조건은 "감쇠가 왜 필요한가"를 설명해 줄 뿐, 스케줄 자체를 정해 주지는 않습니다.
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s8">§8 실전 메모 — 셔플·에폭·선형 스케일링, 그리고 이름의 혼선</h2>
+
+<h3>1. 실제 구현은 "무작위 추출"이 아니라 "섞고 자르기"</h3>
+<p>
+이론은 매 스텝 독립적으로 B개를 뽑는다고 가정하지만, 실제 <code>DataLoader</code>는
+<strong>에폭 시작 때 전체를 한 번 섞고 앞에서부터 B개씩 끊어 씁니다.</strong>
+한 에폭 안에서 모든 샘플이 정확히 한 번씩 쓰이고(비복원), 구현도 빠르며, 경험적으로 더 잘 됩니다.
+<code>shuffle=True</code>를 빼면 데이터가 클래스 순으로 정렬돼 있을 때 배치 하나가 통째로 한 클래스가 되어 학습이 망가집니다.
+위 실험 2·4도 이 방식(에폭마다 셔플 후 분할)으로 돌아갑니다.
+</p>
+
+<h3>2. 배치를 키우면 학습률도 키운다 — 선형 스케일링 법칙</h3>
+<p>
+B를 k배 키우면 스텝 수가 1/k로 줄어듭니다. 같은 거리를 가려면 한 걸음을 k배로 키워야 하므로 <code>η ← k·η</code>.
+이것이 <a href="https://arxiv.org/abs/1706.02677" target="_blank" rel="noopener">Goyal et al. (2017)</a>이
+ImageNet을 B = 8,192로 1시간에 학습시킬 때 쓴 규칙입니다(초반 워밍업을 함께 씀).
+다만 노이즈는 1/√k로만 줄어드는데(§4) 걸음은 k배로 키우는 것이라 무한정 통하지는 않습니다 — 어느 배치 크기부터는 깨집니다.
+</p>
+
+<h3>3. 이름의 혼선 — 프레임워크의 <code>SGD</code>는 B=1이 아니다</h3>
+<p>
+<code>torch.optim.SGD</code>를 쓴다고 해서 샘플 하나씩 학습하는 게 아닙니다.
+배치 크기는 <code>DataLoader</code>가 정하고, 옵티마이저는 "들어온 기울기로 <code>θ ← θ − η·g</code>를 한다"는 규칙일 뿐입니다.
+게다가 <code>momentum=0.9</code>를 주면 그건 이미 순수 SGD가 아니라 모멘텀 SGD입니다.
+오늘날 <strong>"SGD"는 거의 항상 "미니배치 확률적 경사 하강법"을 뜻하고, B=1은 실무에서 쓰지 않습니다</strong>(GPU를 놀리기 때문).
+</p>
+
+<div class="scrollx">
+<table class="tbl">
+<thead><tr><th>말</th><th>엄밀한 뜻</th><th>실무에서 통용되는 뜻</th></tr></thead>
+<tbody>
+<tr><td class="rowhead">SGD</td><td class="l">B = 1, 샘플 하나로 갱신</td><td class="l">미니배치 갱신 전반 (B = 32~512 등)</td></tr>
+<tr><td class="rowhead">batch size</td><td class="l">—</td><td class="l">미니배치 크기 B (전체 N이 아님)</td></tr>
+<tr><td class="rowhead">batch gradient descent</td><td class="l">B = N, 전체 배치</td><td class="l">거의 안 씀 (혼동을 피하려 "full-batch"라 부름)</td></tr>
+<tr><td class="rowhead">iteration / step</td><td class="l">갱신 1회</td><td class="l">미니배치 1개 처리 = 갱신 1회</td></tr>
+<tr><td class="rowhead">epoch</td><td class="l">데이터 전체를 한 번 훑음</td><td class="l">= ⌈N/B⌉ iteration</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>4. Adam·모멘텀은 SGD를 대체하는 게 아니라 위에 얹는 것</h3>
+<p>
+모멘텀·RMSProp·Adam은 전부 <strong>"g<sub>B</sub>를 받아서 어떻게 쓸 것인가"</strong>에 대한 개선입니다.
+기울기를 미니배치로 추정한다는 전제는 똑같이 깔고 갑니다.
+즉 §2~§4의 노이즈 이야기는 Adam을 쓰더라도 그대로 유효하며, 모멘텀은 그 노이즈를 시간축으로 평균 내
+흔들림을 줄이는 장치로도 읽을 수 있습니다. 이 옵티마이저들의 비교는
+<a href="https://dev-jonghoonpark.github.io/how-gradient-descent-works/" target="_blank" rel="noopener">How Gradient Descent Works</a>에서 다룹니다.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="s9">§9 정리 — 한 문장으로</h2>
+
+<div class="note" style="font-size:1rem">
+<strong>GD는 손실의 진짜 기울기를 쓰고, SGD는 그 기울기의 <em>불편 추정량</em>을 씁니다.</strong>
+추정에는 1/√B로 줄어드는 오차가 따라붙지만, 그 대가로 <strong>같은 계산량에 N/B배 더 많이 움직일 수 있고</strong>,
+덤으로 정지점에 갇히지 않습니다. 대신 최솟값에 정확히 정착하지 못하므로 <strong>학습률을 줄여 노이즈 볼을 조입니다.</strong>
+</div>
+
+<h3>헷갈리기 쉬운 것 5가지</h3>
+<ol>
+<li><strong>SGD는 GD의 "빠른 근사"가 아니다.</strong> 방향의 기댓값은 완전히 같습니다. 다른 것은 분산뿐입니다.</li>
+<li><strong>배치를 키운다고 그만큼 좋아지지 않는다.</strong> 계산은 B에 비례해 늘지만 노이즈는 √B로만 줄어듭니다.</li>
+<li><strong>"1 에폭"은 진척도의 단위가 아니다.</strong> 같은 1 에폭이 GD에겐 1스텝, B=256·N=128만이면 5,005스텝입니다.</li>
+<li><strong>상수 학습률로는 수렴하지 않는다.</strong> 손실 곡선이 평평해진 것은 "다 배웠다"가 아니라 "노이즈 볼에 닿았다"일 수 있습니다 — 학습률을 낮춰 보면 구분됩니다.</li>
+<li><strong>노이즈가 크다고 좋은 게 아니다.</strong> 탈출에는 유리하지만 정착에는 불리합니다. 그래서 초반엔 크게, 후반엔 작게 씁니다.</li>
+</ol>
+
+<!-- ================================================================ -->
+<h2 id="s10">§10 이해도 퀴즈</h2>
+
+<div id="quizzes"></div>
+
+<!-- ================================================================ -->
+<h2 id="note-rm">부록 · 1951년, 신경망도 없던 시절에 이미 증명된 것</h2>
+
+<p>
+"확률적 경사 하강법"이라는 이름의 뿌리는 딥러닝보다 60년 이상 앞섭니다.
+1951년 Herbert Robbins와 Sutton Monro는 <em>A Stochastic Approximation Method</em>에서
+전혀 다른 문제를 풀고 있었습니다 — <strong>약물의 반응 곡선처럼 측정할 때마다 값이 튀는 함수에서
+M(x) = α가 되는 x를 어떻게 찾는가.</strong> 측정이 노이즈 투성이라 함수를 정확히 알 수 없는 상황입니다.
+</p>
+
+<p>
+그들의 답은 <code>x<sub>n+1</sub> = x<sub>n</sub> − a<sub>n</sub>(y<sub>n</sub> − α)</code>였고,
+<code>y<sub>n</sub></code>은 노이즈 섞인 한 번의 측정값입니다. 오늘날의 SGD와 같은 모양입니다.
+그리고 <code>Σa<sub>n</sub> = ∞, Σa<sub>n</sub>² &lt; ∞</code>이면 <strong>노이즈가 있어도 수렴한다</strong>는 것을 증명했습니다.
+§7에서 본 그 조건입니다. 신경망도, GPU도, 미니배치도 없던 시절에 나온 결과가
+지금 우리가 학습률을 왜 감쇠시키는지를 설명하고 있는 셈입니다.
+</p>
+
+<p>
+여기서 "stochastic"은 <strong>알고리즘이 무작위라는 뜻이 아니라, 우리가 손에 넣는 관측이 무작위라는 뜻</strong>입니다.
+딥러닝에서 그 "노이즈 섞인 관측"의 정체가 바로 <strong>무작위로 뽑은 미니배치의 기울기</strong>고요.
+이 연결을 신경망 학습에 본격적으로 가져온 것은 1980~90년대의 온라인 학습 연구,
+그리고 대규모 학습에서의 이론적 이점을 정리한
+<a href="https://leon.bottou.org/publications/pdf/compstat-2010.pdf" target="_blank" rel="noopener">Bottou (2010)</a> 등입니다.
+</p>
+
+<p class="fnback"><a href="#s7">↩ §7로 돌아가기</a></p>
+
+<footer>
+<p>
+이 페이지의 모든 수치는 브라우저에서 실제로 계산됩니다 — 외부 라이브러리·서버 없음.
+장난감 데이터(N = 40)는 고정 시드로 생성되므로 새로고침해도 같은 지형이 나옵니다.
+</p>
+<p>
+<a href="https://github.com/dev-jonghoonpark/how-ai-works" target="_blank" rel="noopener">how-ai-works</a> 시리즈 ·
+<a href="https://github.com/dev-jonghoonpark/how-sgd-works" target="_blank" rel="noopener">이 페이지의 소스</a>
+</p>
+</footer>
+
+</main>
+<script>
+"use strict";
+/* ================= theme ================= */
+(function () {
+  var btn = document.getElementById('themeToggle');
+  var saved = null;
+  try { saved = localStorage.getItem('sgd-theme'); } catch (e) {}
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  btn.addEventListener('click', function () {
+    var cur = document.documentElement.getAttribute('data-theme');
+    if (!cur) cur = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('sgd-theme', next); } catch (e) {}
+    redrawAll();
+  });
+})();
+
+/* ================= utils ================= */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gaussFrom(rnd) {
+  var u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function fmt(x, d) { if (!isFinite(x)) return '–'; return x.toFixed(d === undefined ? 2 : d); }
+function comma(n) { return n.toLocaleString('en-US'); }
+function setupHiDPI(cv) {
+  if (cv._init) return ctxOf(cv);
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var w = cv.width, h = cv.height;
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  cv._logicalW = w; cv._logicalH = h; cv._dpr = dpr; cv._init = true;
+  return ctxOf(cv);
+}
+function ctxOf(cv) {
+  var ctx = cv.getContext('2d');
+  var dpr = cv._dpr || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+/* ================= 장난감 데이터 (선형 회귀 N=40) ================= */
+var N = 40, TRUE_W = 2, TRUE_B = 1;
+var X = [], Y = [];
+(function () {
+  var rnd = mulberry32(20260920);
+  for (var i = 0; i < N; i++) {
+    var x = -2 + 4 * rnd();
+    X.push(x);
+    Y.push(TRUE_W * x + TRUE_B + 0.9 * gaussFrom(rnd));
+  }
+})();
+var Sxx = 0, Sx = 0, Sxy = 0, Sy = 0, Syy = 0;
+(function () {
+  for (var i = 0; i < N; i++) { Sxx += X[i] * X[i]; Sx += X[i]; Sxy += X[i] * Y[i]; Sy += Y[i]; Syy += Y[i] * Y[i]; }
+  Sxx /= N; Sx /= N; Sxy /= N; Sy /= N; Syy /= N;
+})();
+// L(w,b) = 0.5*( w^2 Sxx + 2 w b Sx + b^2 - 2 w Sxy - 2 b Sy + Syy )
+function loss(w, b) { return 0.5 * (w * w * Sxx + 2 * w * b * Sx + b * b - 2 * w * Sxy - 2 * b * Sy + Syy); }
+function fullGrad(w, b) { return [w * Sxx + b * Sx - Sxy, w * Sx + b - Sy]; }
+function sampleGrad(i, w, b) { var r = w * X[i] + b - Y[i]; return [r * X[i], r]; }
+function batchGrad(idx, w, b) {
+  var gw = 0, gb = 0;
+  for (var k = 0; k < idx.length; k++) { var i = idx[k], r = w * X[i] + b - Y[i]; gw += r * X[i]; gb += r; }
+  return [gw / idx.length, gb / idx.length];
+}
+// 최적해: [Sxx Sx; Sx 1] [w;b] = [Sxy; Sy]
+var OPT = (function () {
+  var det = Sxx - Sx * Sx;
+  var w = (Sxy - Sx * Sy) / det;
+  var b = (Sxx * Sy - Sx * Sxy) / det;
+  return [w, b];
+})();
+var LOPT = loss(OPT[0], OPT[1]);
+
+/* ================= 손실 지형 배경 ================= */
+var VIEW = { w0: -1.2, w1: 5.2, b0: -1.8, b1: 3.9 };
+function px(cv, w) { return (w - VIEW.w0) / (VIEW.w1 - VIEW.w0) * cv._logicalW; }
+function py(cv, b) { return cv._logicalH - (b - VIEW.b0) / (VIEW.b1 - VIEW.b0) * cv._logicalH; }
+function inv(cv, x, y) {
+  return [VIEW.w0 + x / cv._logicalW * (VIEW.w1 - VIEW.w0),
+          VIEW.b0 + (cv._logicalH - y) / cv._logicalH * (VIEW.b1 - VIEW.b0)];
+}
+function drawLandscape(cv) {
+  var ctx = ctxOf(cv), W = cv._logicalW, H = cv._logicalH;
+  var dark = (document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
+  var img = ctx.createImageData(Math.round(W), Math.round(H));
+  var d = img.data, iw = Math.round(W), ih = Math.round(H);
+  var maxL = Math.max(loss(VIEW.w0, VIEW.b0), loss(VIEW.w1, VIEW.b1), loss(VIEW.w0, VIEW.b1), loss(VIEW.w1, VIEW.b0));
+  for (var yy = 0; yy < ih; yy++) {
+    var b = VIEW.b0 + (ih - yy) / ih * (VIEW.b1 - VIEW.b0);
+    for (var xx = 0; xx < iw; xx++) {
+      var w = VIEW.w0 + xx / iw * (VIEW.w1 - VIEW.w0);
+      var v = Math.sqrt(Math.max(0, loss(w, b) - LOPT) / maxL);
+      var band = (v * 16) % 1;
+      var line = band < 0.06 ? 1 : 0;
+      var t = Math.min(1, v * 1.25);
+      var r, g, bl;
+      if (dark) { r = 18 + t * 40; g = 22 + t * 46; bl = 21 + t * 52; }
+      else { r = 253 - t * 52; g = 253 - t * 44; bl = 250 - t * 22; }
+      if (line) { if (dark) { r += 26; g += 26; bl += 26; } else { r -= 22; g -= 22; bl -= 18; } }
+      var o = (yy * iw + xx) * 4;
+      d[o] = r; d[o + 1] = g; d[o + 2] = bl; d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  // 최적점
+  ctx.fillStyle = css('--accent'); ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('★', px(cv, OPT[0]), py(cv, OPT[1]));
+  ctx.font = '11px ui-monospace, monospace'; ctx.fillStyle = css('--accent-ink');
+  ctx.fillText('θ* (' + fmt(OPT[0]) + ', ' + fmt(OPT[1]) + ')', px(cv, OPT[0]), py(cv, OPT[1]) - 14);
+  // 축
+  ctx.fillStyle = css('--muted'); ctx.font = '11px ui-monospace, monospace';
+  ctx.textAlign = 'left'; ctx.fillText('w →', 8, H - 10);
+  ctx.save(); ctx.translate(12, 16); ctx.textAlign = 'left'; ctx.fillText('b ↑', 0, 0); ctx.restore();
+}
+function arrow(ctx, x0, y0, x1, y1, color, width, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width || 2;
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  var a = Math.atan2(y1 - y0, x1 - x0), hl = Math.max(5, (width || 2) * 3);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x1 - hl * Math.cos(a - 0.4), y1 - hl * Math.sin(a - 0.4));
+  ctx.lineTo(x1 - hl * Math.cos(a + 0.4), y1 - hl * Math.sin(a + 0.4));
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function shuffled(rnd) {
+  var a = [];
+  for (var i = 0; i < N; i++) a.push(i);
+  for (var j = N - 1; j > 0; j--) { var k = Math.floor(rnd() * (j + 1)); var t = a[j]; a[j] = a[k]; a[k] = t; }
+  return a;
+}
+
+function isDark() {
+  var t = document.documentElement.getAttribute('data-theme');
+  if (t) return t === 'dark';
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+var _bgCache = {};
+function paintBG(cv) {
+  var W = cv._logicalW, H = cv._logicalH, key = W + 'x' + H + ':' + isDark();
+  var off = _bgCache[key];
+  if (!off) {
+    off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    off._logicalW = W; off._logicalH = H; off._dpr = 1; off._init = true;
+    drawLandscape(off);
+    _bgCache[key] = off;
+  }
+  var ctx = ctxOf(cv);
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(off, 0, 0, W, H);
+  return ctx;
+}
+function canvasPoint(cv, e) {
+  var r = cv.getBoundingClientRect();
+  var x = (e.clientX - r.left) * (cv._logicalW / r.width);
+  var y = (e.clientY - r.top) * (cv._logicalH / r.height);
+  return [x, y];
+}
+
+/* ================= 실험 1 · 불편 추정량 ================= */
+var D1 = (function () {
+  var cv = document.getElementById('d1c');
+  var ctx = setupHiDPI(cv);
+  var rnd = mulberry32(7);
+  var st = { w: 0.2, b: 3.3, B: 4, list: [], sum: [0, 0], errSum: 0 };
+  var SCALE = 0.075;
+
+  function pick() {
+    var idx = [], pool = shuffled(rnd);
+    for (var i = 0; i < st.B; i++) idx.push(pool[i]);
+    return batchGrad(idx, st.w, st.b);
+  }
+  function add(g) {
+    st.list.push(g);
+    st.sum[0] += g[0]; st.sum[1] += g[1];
+    var G = fullGrad(st.w, st.b);
+    st.errSum += Math.hypot(g[0] - G[0], g[1] - G[1]);
+  }
+  function draw() {
+    ctx = paintBG(cv);
+    var G = fullGrad(st.w, st.b);
+    var x0 = px(cv, st.w), y0 = py(cv, st.b);
+    var sx = (px(cv, 1) - px(cv, 0)) * SCALE, sy = (py(cv, 1) - py(cv, 0)) * SCALE;
+    // 개별 미니배치 기울기 (최근 60개)
+    var start = Math.max(0, st.list.length - 60);
+    for (var i = start; i < st.list.length; i++) {
+      var g = st.list[i];
+      arrow(ctx, x0, y0, x0 - g[0] * sx, y0 - g[1] * sy, css('--muted'), 1.2, 0.35);
+    }
+    // 진짜 기울기 (내리막 방향으로 −∇L 표시)
+    arrow(ctx, x0, y0, x0 - G[0] * sx, y0 - G[1] * sy, css('--s1'), 3.2, 1);
+    // 평균
+    if (st.list.length) {
+      var a = [st.sum[0] / st.list.length, st.sum[1] / st.list.length];
+      arrow(ctx, x0, y0, x0 - a[0] * sx, y0 - a[1] * sy, css('--accent'), 2.4, 1);
+      document.getElementById('d1avg').textContent = '(' + fmt(a[0]) + ', ' + fmt(a[1]) + ')';
+      document.getElementById('d1err').textContent = fmt(Math.hypot(a[0] - G[0], a[1] - G[1]), 3);
+      document.getElementById('d1ind').textContent = fmt(st.errSum / st.list.length, 3);
+    } else {
+      document.getElementById('d1avg').textContent = '–';
+      document.getElementById('d1err').textContent = '–';
+      document.getElementById('d1ind').textContent = '–';
+    }
+    ctx.fillStyle = css('--ink'); ctx.beginPath(); ctx.arc(x0, y0, 4.5, 0, 7); ctx.fill();
+    ctx.font = '11px ui-monospace, monospace'; ctx.fillStyle = css('--ink2'); ctx.textAlign = 'left';
+    ctx.fillText('θ = (' + fmt(st.w) + ', ' + fmt(st.b) + ')', x0 + 9, y0 - 8);
+    ctx.fillText('화살표는 내리막 방향 −g', 10, 18);
+    document.getElementById('d1n').textContent = comma(st.list.length);
+    document.getElementById('d1g').textContent = '(' + fmt(G[0]) + ', ' + fmt(G[1]) + ')';
+  }
+  function reset() { st.list = []; st.sum = [0, 0]; st.errSum = 0; draw(); }
+  document.getElementById('d1B').addEventListener('input', function (e) {
+    st.B = +e.target.value; document.getElementById('d1Bv').textContent = st.B; reset();
+  });
+  document.getElementById('d1One').addEventListener('click', function () { add(pick()); draw(); });
+  document.getElementById('d1Many').addEventListener('click', function () {
+    for (var i = 0; i < 100; i++) add(pick());
+    draw();
+  });
+  document.getElementById('d1Reset').addEventListener('click', reset);
+  cv.addEventListener('click', function (e) {
+    var p = canvasPoint(cv, e), c = inv(cv, p[0], p[1]);
+    st.w = c[0]; st.b = c[1]; reset();
+  });
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 실험 2 · 궤적 실험실 ================= */
+var D2 = (function () {
+  var cv = document.getElementById('d2c');
+  var ctx = setupHiDPI(cv);
+  var START = [-0.6, 3.4];
+  var st, timer = null, rnd;
+  function reset() {
+    rnd = mulberry32(99);
+    st = {
+      B: +document.getElementById('d2B').value,
+      eta: +document.getElementById('d2E').value / 100,
+      s: START.slice(), g: START.slice(),
+      pathS: [START.slice()], pathG: [START.slice()],
+      order: null, ptr: 0, epoch: 0, steps: 0
+    };
+    st.order = shuffled(rnd);
+    draw();
+  }
+  function step() {
+    // SGD 한 스텝 (에폭마다 셔플 후 B개씩 분할)
+    if (st.ptr >= N) { st.order = shuffled(rnd); st.ptr = 0; st.epoch++; }
+    var idx = st.order.slice(st.ptr, Math.min(N, st.ptr + st.B));
+    st.ptr += st.B;
+    var gs = batchGrad(idx, st.s[0], st.s[1]);
+    st.s[0] -= st.eta * gs[0]; st.s[1] -= st.eta * gs[1];
+    if (Math.abs(st.s[0]) < 1e4) st.pathS.push(st.s.slice());
+    // GD 한 스텝
+    var gg = fullGrad(st.g[0], st.g[1]);
+    st.g[0] -= st.eta * gg[0]; st.g[1] -= st.eta * gg[1];
+    st.pathG.push(st.g.slice());
+    st.steps++;
+    if (st.pathS.length > 4000) st.pathS.splice(0, 1000);
+    if (st.pathG.length > 4000) st.pathG.splice(0, 1000);
+  }
+  function path(p, color, width, alpha) {
+    ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.lineJoin = 'round'; ctx.beginPath();
+    for (var i = 0; i < p.length; i++) {
+      var x = px(cv, p[i][0]), y = py(cv, p[i][1]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  function dot(p, color) {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(px(cv, p[0]), py(cv, p[1]), 5, 0, 7); ctx.fill();
+    ctx.strokeStyle = css('--surface'); ctx.lineWidth = 1.4; ctx.stroke();
+  }
+  function draw() {
+    ctx = paintBG(cv);
+    path(st.pathG, css('--s1'), 2, 0.95);
+    path(st.pathS, css('--s2'), 1.4, 0.8);
+    dot(st.g, css('--s1')); dot(st.s, css('--s2'));
+    ctx.font = '12px ui-monospace, monospace'; ctx.textAlign = 'left';
+    ctx.fillStyle = css('--s1'); ctx.fillText('GD (B = 40)', 10, 18);
+    ctx.fillStyle = css('--s2'); ctx.fillText('SGD (B = ' + st.B + ')', 10, 34);
+    document.getElementById('d2steps').textContent = comma(st.steps);
+    document.getElementById('d2ep').textContent = st.epoch;
+    var lg = loss(st.g[0], st.g[1]), ls = loss(st.s[0], st.s[1]);
+    document.getElementById('d2lg').textContent = isFinite(lg) ? fmt(lg, 4) : '발산';
+    document.getElementById('d2ls').textContent = isFinite(ls) ? fmt(ls, 4) : '발산';
+    document.getElementById('d2lo').textContent = fmt(LOPT, 4);
+  }
+  function tick() { for (var i = 0; i < 2; i++) step(); draw(); }
+  var runBtn = document.getElementById('d2Run');
+  function setRun(on) {
+    if (on && !timer) { timer = setInterval(tick, 40); runBtn.textContent = '⏸ 정지'; runBtn.classList.add('on'); }
+    else if (!on && timer) { clearInterval(timer); timer = null; runBtn.textContent = '▶ 실행'; runBtn.classList.remove('on'); }
+  }
+  runBtn.addEventListener('click', function () { setRun(!timer); });
+  document.getElementById('d2Step').addEventListener('click', function () { setRun(false); step(); draw(); });
+  document.getElementById('d2Reset').addEventListener('click', function () { setRun(false); reset(); });
+  document.getElementById('d2B').addEventListener('input', function (e) {
+    document.getElementById('d2Bv').textContent = e.target.value; reset();
+  });
+  document.getElementById('d2E').addEventListener('input', function (e) {
+    document.getElementById('d2Ev').textContent = (+e.target.value / 100).toFixed(2); reset();
+  });
+  reset(); setRun(true);
+  return { draw: function () { draw(); } };
+})();
+
+/* ================= 공용 차트 축 ================= */
+function makeAxes(cv, xmin, xmax, ymin, ymax, opts) {
+  opts = opts || {};
+  var ctx = ctxOf(cv), W = cv._logicalW, H = cv._logicalH;
+  var L = opts.left || 62, R = opts.right || 16, T = opts.top || 18, B = opts.bottom || 40;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = css('--surface2'); ctx.fillRect(0, 0, W, H);
+  var X = function (v) { return L + (v - xmin) / (xmax - xmin) * (W - L - R); };
+  var Y = function (v) { return H - B - (v - ymin) / (ymax - ymin) * (H - T - B); };
+  ctx.strokeStyle = css('--line'); ctx.lineWidth = 1;
+  ctx.fillStyle = css('--muted'); ctx.font = '10.5px ui-monospace, monospace';
+  var i, t;
+  if (opts.yticks) for (i = 0; i < opts.yticks.length; i++) {
+    t = opts.yticks[i];
+    ctx.beginPath(); ctx.moveTo(L, Y(t.v)); ctx.lineTo(W - R, Y(t.v)); ctx.stroke();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(t.label, L - 6, Y(t.v));
+  }
+  if (opts.xticks) for (i = 0; i < opts.xticks.length; i++) {
+    t = opts.xticks[i];
+    ctx.save(); ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.moveTo(X(t.v), T); ctx.lineTo(X(t.v), H - B); ctx.stroke(); ctx.restore();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(t.label, X(t.v), H - B + 6);
+  }
+  ctx.strokeStyle = css('--ink2'); ctx.beginPath();
+  ctx.moveTo(L, T); ctx.lineTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
+  if (opts.xlabel) { ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillStyle = css('--ink2'); ctx.fillText(opts.xlabel, W - R, H - 6); }
+  if (opts.ylabel) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = css('--ink2'); ctx.fillText(opts.ylabel, 6, 2); }
+  return { ctx: ctx, X: X, Y: Y, L: L, R: R, T: T, B: B, W: W, H: H };
+}
+function polyline(ax, pts, color, width, dash) {
+  var ctx = ax.ctx;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = width || 2; ctx.lineJoin = 'round';
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath();
+  for (var i = 0; i < pts.length; i++) {
+    var x = ax.X(pts[i][0]), y = ax.Y(pts[i][1]);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke(); ctx.restore();
+}
+
+/* ================= 실험 3 · 1/√B ================= */
+var D3 = (function () {
+  var cv = document.getElementById('d3c');
+  setupHiDPI(cv);
+  var P = [0.2, 3.3];
+  var BS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32, 36, 40];
+  var data = null, S2 = 0;
+  function measure() {
+    var rnd = mulberry32(31337);
+    var G = fullGrad(P[0], P[1]);
+    S2 = 0;
+    for (var i = 0; i < N; i++) {
+      var gi = sampleGrad(i, P[0], P[1]);
+      S2 += (gi[0] - G[0]) * (gi[0] - G[0]) + (gi[1] - G[1]) * (gi[1] - G[1]);
+    }
+    S2 /= N;
+    data = BS.map(function (B) {
+      var acc = 0, TRIALS = 2000;
+      for (var t = 0; t < TRIALS; t++) {
+        var pool = shuffled(rnd), idx = pool.slice(0, B);
+        var g = batchGrad(idx, P[0], P[1]);
+        acc += (g[0] - G[0]) * (g[0] - G[0]) + (g[1] - G[1]) * (g[1] - G[1]);
+      }
+      var emp = Math.sqrt(acc / TRIALS);
+      return { B: B, emp: emp };
+    });
+  }
+  function theory(B, fpc) {
+    var v = S2 / B;
+    if (fpc) v *= (N - B) / (N - 1);
+    return Math.sqrt(v);
+  }
+  function draw() {
+    var logY = document.getElementById('d3Log').checked;
+    var fpc = document.getElementById('d3FPC').checked;
+    if (!data) measure();
+    var vals = [];
+    data.forEach(function (d) { vals.push(d.emp, theory(d.B, fpc)); });
+    var vmax = Math.max.apply(null, vals.filter(isFinite));
+    var ax, i, d;
+    var ytk = [];
+    if (logY) {
+      var lo = -2.2, hi = Math.ceil(Math.log10(vmax) * 2) / 2;
+      for (i = Math.ceil(lo); i <= hi; i++) ytk.push({ v: i, label: '1e' + i });
+      ax = makeAxes(cv, 0, 41, lo, hi, { xlabel: '배치 크기 B →', ylabel: 'RMS ‖g_B − ∇L‖ (로그)', yticks: ytk, xticks: [1, 8, 16, 24, 32, 40].map(function (v) { return { v: v, label: '' + v }; }) });
+    } else {
+      for (i = 0; i <= 4; i++) ytk.push({ v: vmax * i / 4, label: fmt(vmax * i / 4, 2) });
+      ax = makeAxes(cv, 0, 41, 0, vmax * 1.05, { xlabel: '배치 크기 B →', ylabel: 'RMS ‖g_B − ∇L‖', yticks: ytk, xticks: [1, 8, 16, 24, 32, 40].map(function (v) { return { v: v, label: '' + v }; }) });
+    }
+    function ty(v) { return logY ? (v > 1e-9 ? Math.log10(v) : null) : v; }
+    var tpts = [], epts = [];
+    for (i = 0; i < data.length; i++) {
+      d = data[i];
+      var tv = ty(theory(d.B, fpc)), ev = ty(d.emp);
+      if (tv !== null) tpts.push([d.B, tv]);
+      if (ev !== null) epts.push([d.B, ev]);
+    }
+    polyline(ax, tpts, css('--s1'), 2.2);
+    var ctx = ax.ctx;
+    ctx.fillStyle = css('--s2');
+    for (i = 0; i < data.length; i++) {
+      d = data[i]; var yv = ty(d.emp);
+      if (yv === null) {
+        ctx.save(); ctx.fillStyle = css('--good');
+        ctx.beginPath(); ctx.arc(ax.X(d.B), ax.Y(logY ? -2.2 : 0), 4.5, 0, 7); ctx.fill();
+        ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText('오차 0', ax.X(d.B), ax.Y(logY ? -2.2 : 0) - 7);
+        ctx.restore();
+      } else {
+        ctx.beginPath(); ctx.arc(ax.X(d.B), ax.Y(yv), 4, 0, 7); ctx.fill();
+      }
+    }
+    ctx.font = '12px ui-monospace, monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillStyle = css('--s1'); ctx.fillText('이론 √(S²/B · (N−B)/(N−1))', ax.W - ax.R - 6, ax.T + 4);
+    ctx.fillStyle = css('--s2'); ctx.fillText('실측 (2,000회 추출)', ax.W - ax.R - 6, ax.T + 22);
+    // 표
+    var rows = '<thead><tr><th>B</th><th>실측 RMS</th><th>이론</th><th>실측/이론</th><th>B=1 대비</th></tr></thead><tbody>';
+    var base = data[0].emp;
+    [1, 2, 4, 8, 16, 32, 40].forEach(function (B) {
+      var d = data.filter(function (z) { return z.B === B; })[0];
+      if (!d) return;
+      var th = theory(B, fpc);
+      rows += '<tr><td class="mono">' + B + '</td><td class="mono">' + fmt(d.emp, 4) + '</td><td class="mono">' + fmt(th, 4) +
+        '</td><td class="mono">' + (th > 1e-9 ? fmt(d.emp / th, 3) : '–') + '</td><td class="mono">' + (d.emp > 1e-9 ? '÷ ' + fmt(base / d.emp, 2) : '0') + '</td></tr>';
+    });
+    rows += '</tbody>';
+    document.getElementById('d3t').innerHTML = rows;
+  }
+  document.getElementById('d3Run').addEventListener('click', function () { data = null; draw(); });
+  document.getElementById('d3Log').addEventListener('change', draw);
+  document.getElementById('d3FPC').addEventListener('change', draw);
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 실험 4 · 같은 예산 경주 ================= */
+var D4 = (function () {
+  var cv = document.getElementById('d4c');
+  setupHiDPI(cv);
+  var START = [-0.6, 3.4];
+  var CFG = [
+    { B: 1, color: '--s2', label: 'B = 1 (SGD)' },
+    { B: 4, color: '--s3', label: 'B = 4' },
+    { B: 16, color: '--accent', label: 'B = 16' },
+    { B: 40, color: '--s1', label: 'B = 40 (GD)' }
+  ];
+  function run(B, eta, budget, seed) {
+    var rnd = mulberry32(seed), w = START[0], b = START[1];
+    var order = shuffled(rnd), ptr = 0, used = 0, pts = [[0, loss(w, b)]];
+    while (used < budget) {
+      if (ptr >= N) { order = shuffled(rnd); ptr = 0; }
+      var idx = order.slice(ptr, Math.min(N, ptr + B));
+      ptr += B;
+      var g = batchGrad(idx, w, b);
+      w -= eta * g[0]; b -= eta * g[1];
+      used += idx.length;
+      if (!isFinite(w) || !isFinite(b)) break;
+      pts.push([used, loss(w, b)]);
+    }
+    return { pts: pts, final: loss(w, b) };
+  }
+  function draw() {
+    var eta = +document.getElementById('d4E').value / 100;
+    var epochs = +document.getElementById('d4Bud').value;
+    var budget = epochs * N;
+    var runs = CFG.map(function (c, i) { return run(c.B, eta, budget, 2024 + i * 17); });
+    var i0 = runs[0].pts[0][1] - LOPT;
+    var lo = -4, hi = Math.ceil(Math.log10(i0));
+    var ytk = [];
+    for (var k = lo; k <= hi; k++) ytk.push({ v: k, label: '1e' + k });
+    var xt = [];
+    for (var e = 0; e <= epochs; e += Math.max(1, Math.round(epochs / 6))) xt.push({ v: e * N, label: e + 'ep' });
+    var ax = makeAxes(cv, 0, budget, lo, hi, {
+      xlabel: '계산한 샘플 기울기 수 →', ylabel: 'L(θ) − L*  (최솟값까지 남은 거리, 로그)', yticks: ytk, xticks: xt
+    });
+    var legend = '', stats = '';
+    runs.forEach(function (r, i) {
+      var c = CFG[i];
+      var pts = r.pts.filter(function (p) { return isFinite(p[1]) && p[1] - LOPT > 1e-9; })
+        .map(function (p) { return [p[0], Math.max(-4, Math.log10(p[1] - LOPT))]; });
+      polyline(ax, pts, css(c.color), c.B === 40 ? 2.4 : 1.6);
+      legend += '<span><span class="sw" style="background:var(' + c.color + ')"></span>' + c.label + '</span>';
+      stats += '<div class="stat" style="border-color:var(' + c.color + ')">' +
+        c.label + ' 최종 L−L*<b>' + (isFinite(r.final) ? fmt(r.final - LOPT, 4) : '발산') + '</b></div>';
+    });
+    document.getElementById('d4leg').innerHTML = legend;
+    document.getElementById('d4stats').innerHTML = stats +
+      '<div class="stat hl">예산<b>' + comma(budget) + '회</b></div>' +
+      '<div class="stat">갱신 횟수 B=1 : B=40<b>' + comma(Math.floor(budget)) + ' : ' + comma(Math.floor(budget / N)) + '</b></div>';
+  }
+  document.getElementById('d4Run').addEventListener('click', draw);
+  document.getElementById('d4E').addEventListener('input', function (e) {
+    document.getElementById('d4Ev').textContent = (+e.target.value / 100).toFixed(2); draw();
+  });
+  document.getElementById('d4Bud').addEventListener('input', function (e) {
+    document.getElementById('d4Budv').textContent = e.target.value; draw();
+  });
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 실험 5 · 갱신 횟수 계산기 ================= */
+(function () {
+  function upd() {
+    var n = Math.max(1, Math.floor(+document.getElementById('d5N').value || 1));
+    var b = Math.max(1, Math.floor(+document.getElementById('d5B').value || 1));
+    var ep = Math.max(1, Math.floor(+document.getElementById('d5EP').value || 1));
+    var steps = Math.ceil(n / b) * ep;
+    document.getElementById('d5gd').textContent = comma(ep) + '회';
+    document.getElementById('d5sgd').textContent = comma(steps) + '회';
+    document.getElementById('d5ratio').textContent = '×' + comma(Math.round(steps / ep));
+    document.getElementById('d5cost').textContent = comma(n * ep) + '회';
+  }
+  ['d5N', 'd5B', 'd5EP'].forEach(function (id) { document.getElementById(id).addEventListener('input', upd); });
+  upd();
+})();
+
+/* ================= 실험 6 · 지역 최솟값 탈출 ================= */
+var D6 = (function () {
+  var cv = document.getElementById('d6c');
+  setupHiDPI(cv);
+  function F(w) { return (w * w * w * w / 4 - 2 * w * w + 0.6 * w) / 4; }
+  function Fp(w) { return (w * w * w - 4 * w + 0.6) / 4; }
+  function newton(x) { for (var i = 0; i < 80; i++) { var f = x * x * x - 4 * x + 0.6, d = 3 * x * x - 4; x -= f / d; } return x; }
+  var wL = newton(-2.1), wMid = newton(0.15), wR = newton(1.95);
+  var START = 2.6, T = 400, VIEW6 = { a: -3.2, b: 3.2 };
+  var st = { w: START, t: 0, trail: [], hist: null, rate: null, deep: 0, none: 0 };
+  var timer = null, rnd = mulberry32(555);
+  function sigma() { return +document.getElementById('d6S').value / 10; }
+  function eta() { return +document.getElementById('d6E').value / 100; }
+  function rollOnce(steps, s, e) {
+    var w = START;
+    for (var t = 0; t < steps; t++) {
+      w -= e * (Fp(w) + s * gaussFrom(rnd));
+      if (!isFinite(w) || Math.abs(w) > 12) return NaN;
+    }
+    return w;
+  }
+  function classify(w) {
+    if (!isFinite(w)) return 'none';
+    if (Math.abs(w - wL) < 0.6) return 'left';
+    if (Math.abs(w - wR) < 0.6) return 'right';
+    return 'none';
+  }
+  function draw() {
+    var ymin = F(wL) - 0.15, ymax = F(START) + 0.5;
+    var ytk = [];
+    for (var k = -2; k <= 1; k += 0.5) if (k >= ymin && k <= ymax) ytk.push({ v: k, label: fmt(k, 1) });
+    var ax = makeAxes(cv, VIEW6.a, VIEW6.b, ymin, ymax, {
+      xlabel: '파라미터 w →', ylabel: '손실 F(w)', yticks: ytk,
+      xticks: [-3, -2, -1, 0, 1, 2, 3].map(function (v) { return { v: v, label: '' + v }; }), bottom: 76
+    });
+    var ctx = ax.ctx, pts = [];
+    for (var i = 0; i <= 400; i++) { var w = VIEW6.a + (VIEW6.b - VIEW6.a) * i / 400; pts.push([w, F(w)]); }
+    polyline(ax, pts, css('--ink2'), 2);
+    // 웅덩이 표시
+    ctx.font = '11px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = css('--accent-ink'); ctx.fillText('전체 최솟값 ' + fmt(wL), ax.X(wL), ax.Y(F(wL)) - 10);
+    ctx.fillStyle = css('--s2'); ctx.fillText('얕은 웅덩이 ' + fmt(wR) + ' (출발 w = 2.6)', ax.X(wR), ax.Y(F(wR)) - 10);
+    ctx.fillStyle = css('--muted'); ctx.fillText('언덕 ' + fmt(wMid), ax.X(wMid), ax.Y(F(wMid)) - 8);
+    // 히스토그램
+    if (st.hist) {
+      var maxc = Math.max.apply(null, st.hist);
+      for (var h = 0; h < st.hist.length; h++) {
+        if (!st.hist[h]) continue;
+        var w0 = VIEW6.a + (VIEW6.b - VIEW6.a) * h / st.hist.length;
+        var w1 = VIEW6.a + (VIEW6.b - VIEW6.a) * (h + 1) / st.hist.length;
+        var hh = st.hist[h] / maxc * 44;
+        ctx.fillStyle = w0 < wMid ? css('--accent') : css('--s2');
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(ax.X(w0), ax.H - ax.B + 22, Math.max(1, ax.X(w1) - ax.X(w0) - 1), hh);
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = css('--muted'); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10.5px ui-monospace, monospace';
+      ctx.fillText('300회 실행의 최종 위치 분포', ax.L + 4, ax.H - ax.B + 22);
+    }
+    // 공과 자취
+    ctx.globalAlpha = 0.28; ctx.fillStyle = css('--s2');
+    for (var j = 0; j < st.trail.length; j++) {
+      ctx.beginPath(); ctx.arc(ax.X(st.trail[j]), ax.Y(F(st.trail[j])), 2, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (isFinite(st.w) && st.w > VIEW6.a && st.w < VIEW6.b) {
+      ctx.fillStyle = css('--crit');
+      ctx.beginPath(); ctx.arc(ax.X(st.w), ax.Y(F(st.w)) - 6, 6.5, 0, 7); ctx.fill();
+    }
+    document.getElementById('d6w').textContent = isFinite(st.w) ? fmt(st.w, 3) : '발산';
+    document.getElementById('d6t').textContent = st.t + ' / ' + T;
+    document.getElementById('d6rate').textContent = st.rate === null ? '–' : fmt(st.rate * 100, 1) + '%';
+    document.getElementById('d6deep').textContent = st.rate === null ? '–' : comma(st.deep) + '회';
+    document.getElementById('d6none').textContent = st.rate === null ? '–' : comma(st.none) + '회';
+  }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  document.getElementById('d6One').addEventListener('click', function () {
+    stop();
+    st.w = START; st.t = 0; st.trail = [];
+    var s = sigma(), e = eta();
+    timer = setInterval(function () {
+      for (var k = 0; k < 4 && st.t < T; k++) {
+        st.w -= e * (Fp(st.w) + s * gaussFrom(rnd));
+        if (!isFinite(st.w)) st.w = NaN;
+        st.trail.push(st.w); st.t++;
+      }
+      if (st.t >= T) stop();
+      draw();
+    }, 24);
+  });
+  document.getElementById('d6Many').addEventListener('click', function () {
+    stop();
+    var s = sigma(), e = eta(), RUNS = 300, bins = new Array(64).fill(0);
+    var left = 0, none = 0, deep = 0;
+    for (var r = 0; r < RUNS; r++) {
+      var w = rollOnce(T, s, e), c = classify(w);
+      if (c === 'left') { left++; deep++; }
+      if (c === 'none') none++;
+      if (isFinite(w) && w > VIEW6.a && w < VIEW6.b) {
+        var bi = Math.floor((w - VIEW6.a) / (VIEW6.b - VIEW6.a) * bins.length);
+        bins[Math.max(0, Math.min(bins.length - 1, bi))]++;
+      }
+    }
+    st.hist = bins; st.rate = left / RUNS; st.deep = deep; st.none = none;
+    st.trail = []; st.w = NaN; st.t = T;
+    draw();
+  });
+  document.getElementById('d6Reset').addEventListener('click', function () {
+    stop(); st = { w: START, t: 0, trail: [], hist: null, rate: null, deep: 0, none: 0 }; draw();
+  });
+  document.getElementById('d6S').addEventListener('input', function (e) {
+    document.getElementById('d6Sv').textContent = (+e.target.value / 10).toFixed(1);
+  });
+  document.getElementById('d6E').addEventListener('input', function (e) {
+    document.getElementById('d6Ev').textContent = (+e.target.value / 100).toFixed(2);
+  });
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 실험 7 · 노이즈 볼과 학습률 감쇠 ================= */
+var D7 = (function () {
+  var cv = document.getElementById('d7c');
+  setupHiDPI(cv);
+  var START = [-0.6, 3.4], T = 1200, RUNS = 20, EVERY = 4;
+  function series(kind, eta0, tau, seed, iid) {
+    var acc = new Float64Array(Math.floor(T / EVERY) + 1);
+    for (var r = 0; r < RUNS; r++) {
+      var rnd = mulberry32(seed + r * 131);
+      var w = START[0], b = START[1], order = shuffled(rnd), ptr = 0, m = 0;
+      for (var t = 0; t <= T; t++) {
+        if (t % EVERY === 0) { acc[m] += Math.hypot(w - OPT[0], b - OPT[1]); m++; }
+        var idx;
+        if (iid) { idx = [Math.min(N - 1, Math.floor(rnd() * N))]; }
+        else {
+          if (ptr >= N) { order = shuffled(rnd); ptr = 0; }
+          idx = [order[ptr]]; ptr += 1;
+        }
+        var g = batchGrad(idx, w, b);
+        var eta = kind === 'decay' ? eta0 / (1 + t / tau) : eta0;
+        w -= eta * g[0]; b -= eta * g[1];
+      }
+    }
+    var out = [];
+    for (var i = 0; i < acc.length; i++) out.push([i * EVERY, acc[i] / RUNS]);
+    return out;
+  }
+  function floorOf(s) {
+    var start = Math.floor(s.length * 0.8), sum = 0, n = 0;
+    for (var i = start; i < s.length; i++) { sum += s[i][1]; n++; }
+    return sum / n;
+  }
+  function draw() {
+    var eta0 = +document.getElementById('d7E').value / 100;
+    var tau = +document.getElementById('d7T').value;
+    var iid = document.getElementById('d7IID').checked;
+    var a = series('const', eta0, 0, 11, iid), b = series('const', eta0 / 4, 0, 11, iid), c = series('decay', eta0, tau, 11, iid);
+    var all = a.concat(b).concat(c).map(function (p) { return p[1]; }).filter(function (v) { return v > 0 && isFinite(v); });
+    var lo = Math.floor(Math.log10(Math.min.apply(null, all))), hi = Math.ceil(Math.log10(Math.max.apply(null, all)));
+    var ytk = [];
+    for (var k = lo; k <= hi; k++) ytk.push({ v: k, label: '1e' + k });
+    var xtk = [];
+    for (var x = 0; x <= T; x += 300) xtk.push({ v: x, label: '' + x });
+    var ax = makeAxes(cv, 0, T, lo, hi, { xlabel: '갱신 횟수 t →', ylabel: '‖θ − θ*‖ (20회 평균, 로그)', yticks: ytk, xticks: xtk });
+    function L(s) { return s.filter(function (p) { return p[1] > 0 && isFinite(p[1]); }).map(function (p) { return [p[0], Math.log10(p[1])]; }); }
+    polyline(ax, L(a), css('--s2'), 1.8);
+    polyline(ax, L(b), css('--s3'), 1.8);
+    polyline(ax, L(c), css('--accent'), 2.2);
+    var f1 = floorOf(a), f2 = floorOf(b);
+    var ctx = ax.ctx;
+    ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    [[f1, '--s2'], [f2, '--s3']].forEach(function (z) {
+      ctx.strokeStyle = css(z[1]);
+      ctx.beginPath(); ctx.moveTo(ax.L, ax.Y(Math.log10(z[0]))); ctx.lineTo(ax.W - ax.R, ax.Y(Math.log10(z[0]))); ctx.stroke();
+    });
+    ctx.restore();
+    document.getElementById('d7f1').textContent = fmt(f1, 4);
+    document.getElementById('d7f2').textContent = fmt(f2, 4);
+    document.getElementById('d7r').textContent = fmt(f1 / f2, 2) + '배 ' + (iid ? '(이론 2)' : '(셔플)');
+    document.getElementById('d7f3').textContent = fmt(c[c.length - 1][1], 4);
+  }
+  document.getElementById('d7Run').addEventListener('click', draw);
+  document.getElementById('d7E').addEventListener('input', function (e) {
+    document.getElementById('d7Ev').textContent = (+e.target.value / 100).toFixed(2); draw();
+  });
+  document.getElementById('d7T').addEventListener('input', function (e) {
+    document.getElementById('d7Tv').textContent = e.target.value; draw();
+  });
+  document.getElementById('d7IID').addEventListener('change', draw);
+  draw();
+  return { draw: draw };
+})();
+
+/* ================= 퀴즈 ================= */
+(function () {
+  var QS = [
+    {
+      q: '미니배치 기울기 g_B가 "불편 추정량"이라는 말의 뜻은?',
+      opts: ['g_B는 ∇L보다 항상 작다', 'g_B의 기댓값이 ∇L과 정확히 같다', 'g_B는 ∇L과 항상 같은 방향이다', 'B가 커질수록 g_B가 ∇L보다 정확해진다'],
+      a: 1,
+      e: '한 번 한 번은 틀리지만 평균 내면 ∇L입니다. 같은 방향임이 보장되지는 않습니다 — 반대 방향인 미니배치도 흔합니다(실험 1에서 회색 화살표가 파란 화살표와 90° 이상 벌어지는 경우를 찾아보세요).'
+    },
+    {
+      q: '배치 크기를 16에서 64로 키웠습니다. 기울기 노이즈(RMS)는 대략 어떻게 되나요?',
+      opts: ['1/4로 줄어든다', '1/2로 줄어든다', '그대로다', '4배가 된다'],
+      a: 1,
+      e: '노이즈는 1/√B로 줄어듭니다. B를 4배 키우면 √4 = 2배만 줄어듭니다. 계산량은 정확히 4배 늘어나므로, "계산량당 노이즈 감소"로 보면 큰 배치는 손해입니다.'
+    },
+    {
+      q: 'N = 100만, B = 100, 10에폭으로 학습했습니다. 가중치는 몇 번 갱신되었나요?',
+      opts: ['10번', '1만 번', '10만 번', '1,000만 번'],
+      a: 2,
+      e: '에폭당 N/B = 1만 스텝 × 10에폭 = 10만 번입니다. 같은 조건에서 GD라면 딱 10번 갱신됩니다 — 계산량은 똑같이 1,000만 번의 샘플 기울기인데도요.'
+    },
+    {
+      q: 'GD가 기울기 0인 지점(안장점·얕은 지역 최솟값)에 도달했습니다. 무슨 일이 일어나나요?',
+      opts: ['학습률을 자동으로 키워 빠져나간다', '영원히 그 자리에 머문다', '무작위로 흔들리다 빠져나온다', '손실이 다시 커진다'],
+      a: 1,
+      e: '∇L = 0이면 θ ← θ − η·0이라 제자리입니다. SGD는 g_B가 그 지점에서도 0이 아니라(기댓값만 0) 계속 흔들리고, 그 흔들림이 언덕을 넘게 해 줄 수 있습니다.'
+    },
+    {
+      q: '상수 학습률로 SGD를 돌렸더니 손실 곡선이 평평해졌습니다. 가장 먼저 의심할 것은?',
+      opts: ['최솟값에 정확히 도달했다', '데이터가 부족하다', '노이즈 볼에 닿아 그 아래로 못 내려간다', '기울기 계산에 버그가 있다'],
+      a: 2,
+      e: '상수 η에서 SGD는 최솟값에 정착하지 못하고 반경 ∝ √η의 구름 안을 맴돕니다. 학습률을 10배 줄여 보면 구분됩니다 — 손실이 한 계단 더 떨어지면 노이즈 볼이었던 것입니다.'
+    },
+    {
+      q: 'Robbins–Monro 조건 Σηₜ = ∞, Σηₜ² < ∞ 중 상수 학습률 η가 어기는 것은?',
+      opts: ['첫 번째만 어긴다', '두 번째만 어긴다', '둘 다 어긴다', '둘 다 만족한다'],
+      a: 1,
+      e: '상수 η는 Ση = ∞(만족)이지만 Ση² = ∞(위반)입니다. 노이즈의 누적이 사그라들지 않아 수렴하지 못하고 맴돕니다. η_t = η₀/t는 둘 다 만족합니다.'
+    },
+    {
+      q: 'PyTorch에서 torch.optim.SGD를 쓰면 배치 크기는 1인가요?',
+      opts: ['그렇다', '아니다 — 배치 크기는 DataLoader가 정한다', 'momentum을 주면 1이 된다', '자동으로 32가 된다'],
+      a: 1,
+      e: '옵티마이저는 "들어온 기울기로 θ ← θ − η·g를 한다"는 규칙일 뿐입니다. 몇 개의 샘플로 그 기울기를 만들었는지는 DataLoader의 batch_size가 정합니다. 실무에서 "SGD"는 거의 항상 미니배치 SGD를 뜻합니다.'
+    }
+  ];
+  var host = document.getElementById('quizzes');
+  QS.forEach(function (Q, qi) {
+    var d = document.createElement('div');
+    d.className = 'quiz';
+    var html = '<div class="q">Q' + (qi + 1) + '. ' + Q.q + '</div><div class="opts">';
+    Q.opts.forEach(function (o, i) { html += '<button data-i="' + i + '">' + String.fromCharCode(9312 + i) + ' ' + o + '</button>'; });
+    html += '</div><div class="expl">' + Q.e + '</div>';
+    d.innerHTML = html;
+    d.querySelectorAll('.opts button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var i = +btn.dataset.i;
+        btn.classList.add(i === Q.a ? 'correct' : 'wrong');
+        if (i !== Q.a) d.querySelectorAll('.opts button')[Q.a].classList.add('correct');
+        d.querySelector('.expl').classList.add('show');
+      });
+    });
+    host.appendChild(d);
+  });
+})();
+
+/* ================= 테마 전환 시 전체 다시 그리기 ================= */
+function redrawAll() {
+  _bgCache = {};
+  [D1, D2, D3, D4, D6, D7].forEach(function (d) { if (d && d.draw) d.draw(); });
+}
+</script>
+</body>
+</html>
